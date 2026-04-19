@@ -164,7 +164,7 @@ pip install -r requirements.txt
 ```
 
 This installs:
-- Flask 3.0.3
+- Flask 3.1.3
 - reportlab 4.2.2
 - python-dotenv 1.0.1
 - **supabase 2.5.0** (new)
