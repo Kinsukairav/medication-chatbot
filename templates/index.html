@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Medication Assistant</title>
+    <meta name="description" content="AI-powered medication reminder and dosage assistant.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <script>pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';</script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+
+<body>
+    <div class="app">
+        <!-- ── Sidebar ──────────────────────────────── -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-top">
+                <div class="sidebar-brand">
+                    <span class="material-symbols-outlined sidebar-brand-logo">medication</span>
+                    <span class="sidebar-brand-text">Medication Assistant</span>
+                </div>
+                <button id="new-chat-btn" class="new-chat-btn">
+                    <span class="material-symbols-outlined">add</span>
+                    <span>New Chat</span>
+                </button>
+                <button id="sidebar-favorites-btn" class="sidebar-link sidebar-nav-link" type="button">
+                    <span class="material-symbols-outlined">star</span>
+                    <span>Saved Chats</span>
+                    <span class="material-symbols-outlined sidebar-toggle-icon" id="saved-toggle-icon">expand_more</span>
+                </button>
+            </div>
+
+            <!-- Saved Chats Section -->
+            <nav class="sidebar-sessions saved-sessions" id="starred-list"></nav>
+
+            <!-- Recent / history -->
+            <div class="sidebar-label history-label" id="history-label">Chat History</div>
+            <nav class="sidebar-sessions history-sessions" id="session-list"></nav>
+
+            <div class="sidebar-bottom">
+                <button id="sidebar-settings-btn" class="sidebar-link">
+                    <span class="material-symbols-outlined">settings</span>
+                    API Settings
+                </button>
+            </div>
+        </aside>
+
+        <!-- ── Sidebar Resize Handle ─────────────────── -->
+        <div class="sidebar-resize-handle" id="sidebar-resize-handle"></div>
+
+        <!-- ── Sidebar Overlay (mobile) ─────────────── -->
+        <div class="sidebar-overlay" id="sidebar-overlay"></div>
+
+        <!-- ── Main Area ────────────────────────────── -->
+        <main class="main">
+            <header class="header">
+                <button id="sidebar-toggle" class="icon-btn" title="Toggle sidebar">
+                    <span class="material-symbols-outlined">menu</span>
+                </button>
+                <h1 class="header-title">Medication Assistant</h1>
+                <div class="header-controls">
+                    <button id="theme-toggle" class="icon-btn" title="Toggle theme">
+                        <span class="material-symbols-outlined">dark_mode</span>
+                    </button>
+                    <button id="export-pdf-btn" class="icon-btn" title="Export as PDF">
+                        <span class="material-symbols-outlined">picture_as_pdf</span>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Chat area -->
+            <div class="chat-area" id="chat-area">
+                <div class="chat-scroll" id="chat-scroll">
+                    <div class="chat-messages" id="chat-messages">
+                        <!-- Welcome screen (shown when no session active) -->
+                        <div class="welcome" id="welcome-screen">
+                            <div class="welcome-icon">
+                                <span class="material-symbols-outlined">medication</span>
+                            </div>
+                            <h2>Medication Assistant</h2>
+                            <p>Ask about medications, dosages, drug interactions, or schedules.</p>
+                            <div class="welcome-chips">
+                                <button class="chip" data-prompt="What are common side effects of ibuprofen?">Side
+                                    effects of ibuprofen</button>
+                                <button class="chip"
+                                    data-prompt="What is the correct dosage of paracetamol for adults?">Paracetamol
+                                    dosage</button>
+                                <button class="chip" data-prompt="Can I take aspirin and ibuprofen together?">Drug
+                                    interactions</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Input area -->
+            <div class="input-area">
+                <div class="input-wrapper">
+                    <!-- Image preview -->
+                    <div class="attachment-preview" id="attachment-preview" style="display:none;">
+                        <img id="preview-img" class="preview-thumb" style="display:none;">
+                        <div id="file-info" class="file-info" style="display:none;">
+                            <span class="material-symbols-outlined">description</span>
+                            <span id="file-info-name"></span>
+                        </div>
+                        <button id="remove-attachment" class="remove-btn" title="Remove">
+                            <span class="material-symbols-outlined">close</span>
+                        </button>
+                    </div>
+                    <div class="input-group">
+                        <input type="file" id="file-upload" accept=".pdf,.txt,.png,.jpg,.jpeg,.webp" hidden>
+                        <button id="attach-btn" class="icon-btn" title="Attach file or image">
+                            <span class="material-symbols-outlined">attach_file</span>
+                        </button>
+                        <textarea id="chat-input" placeholder="Ask about your medication…" rows="1"></textarea>
+                        <button id="model-switch-btn" class="model-switch-btn" title="Switch AI model">
+                            <span class="model-icon-wrap" id="model-icon" aria-hidden="true">
+                                <svg class="model-icon model-icon-gemini" viewBox="0 0 24 24" role="img" aria-label="Gemini logo">
+                                    <defs>
+                                        <linearGradient id="gemini-gradient" x1="4" y1="3" x2="20" y2="21" gradientUnits="userSpaceOnUse">
+                                            <stop offset="0%" stop-color="#7C4DFF" />
+                                            <stop offset="45%" stop-color="#4285F4" />
+                                            <stop offset="100%" stop-color="#00C2A8" />
+                                        </linearGradient>
+                                    </defs>
+                                    <path fill="url(#gemini-gradient)" d="M12 2.2l1.9 5.8L19.8 10l-5.9 2-1.9 5.8-1.9-5.8L4.2 10l5.9-2L12 2.2zm0 6.7l-.9 2.8-2.8.9 2.8.9.9 2.8.9-2.8 2.8-.9-2.8-.9L12 8.9z" />
+                                </svg>
+                                <svg class="model-icon model-icon-openrouter" viewBox="0 0 24 24" role="img" aria-label="OpenRouter logo">
+                                    <defs>
+                                        <linearGradient id="openrouter-gradient" x1="4" y1="4" x2="20" y2="20" gradientUnits="userSpaceOnUse">
+                                            <stop offset="0%" stop-color="#1E90FF" />
+                                            <stop offset="50%" stop-color="#7C3AED" />
+                                            <stop offset="100%" stop-color="#22C55E" />
+                                        </linearGradient>
+                                    </defs>
+                                    <circle cx="12" cy="12" r="8.6" fill="none" stroke="url(#openrouter-gradient)" stroke-width="2.2" />
+                                    <path fill="url(#openrouter-gradient)" d="M12 5.7a6.3 6.3 0 0 1 5.4 3.1l-1.7.9A4.4 4.4 0 0 0 12 7.6c-1.7 0-3.2.9-4 2.3l-1.7-.9A6.3 6.3 0 0 1 12 5.7zm0 12.6a6.3 6.3 0 0 1-5.4-3.1l1.7-.9a4.4 4.4 0 0 0 3.7 2.1c1.7 0 3.2-.9 4-2.3l1.7.9A6.3 6.3 0 0 1 12 18.3z" />
+                                    <circle cx="12" cy="12" r="2" fill="url(#openrouter-gradient)" />
+                                </svg>
+                            </span>
+                            <span class="model-label" id="model-label">OpenRouter</span>
+                        </button>
+                        <button id="mic-btn" class="icon-btn" title="Voice input">
+                            <span class="material-symbols-outlined">mic</span>
+                        </button>
+                        <button id="send-btn" class="send-btn" disabled title="Send message">
+                            <span class="material-symbols-outlined">arrow_upward</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- ── Settings Modal ───────────────────────────── -->
+    <div class="modal-overlay" id="settings-modal" style="display:none;">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>API Configuration</h2>
+                <button id="close-modal-x" class="icon-btn"><span
+                        class="material-symbols-outlined">close</span></button>
+            </div>
+            <div class="form-group">
+                <label for="gemini-key">Gemini API Key</label>
+                <input type="password" id="gemini-key" placeholder="AIza…">
+            </div>
+            <div class="form-group">
+                <label for="openrouter-key">OpenRouter API Key</label>
+                <input type="password" id="openrouter-key" placeholder="sk-or-…">
+            </div>
+            <div class="modal-actions">
+                <button id="save-keys-btn" class="btn-primary">Save Keys</button>
+                <button id="close-modal-btn" class="btn-secondary">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Hidden select to keep API mode state (used by main.js) -->
+    <select id="api-selector" style="display:none;">
+        <option value="gemini">Gemini</option>
+        <option value="openrouter" selected>OpenRouter</option>
+    </select>
+
+    <script src="/static/js/config.js"></script>
+    <script src="/static/js/gemini.js"></script>
+    <script src="/static/js/openrouter.js"></script>
+    <script src="/static/js/main.js"></script>
+</body>
+
+</html>
