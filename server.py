@@ -16,6 +16,14 @@ import os
 import urllib.request
 import json
 
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None
+
+if load_dotenv:
+    load_dotenv()
+
 
 app = Flask(__name__)
 
@@ -72,6 +80,19 @@ def init_db():
 @app.route('/')
 def index():
     return render_template('index.html')
+
+
+@app.route('/api/runtime-config.js')
+def runtime_config_js():
+    gemini_key = json.dumps(os.getenv('GEMINI_API_KEY', ''))
+    openrouter_key = json.dumps(os.getenv('OPENROUTER_API_KEY', ''))
+    script = (
+        'window.APP_CONFIG = {'
+        f'GEMINI_API_KEY: {gemini_key}, '
+        f'OPENROUTER_API_KEY: {openrouter_key}'
+        '};'
+    )
+    return app.response_class(script, mimetype='application/javascript')
 
 
 # ── Session CRUD ────────────────────────────────────────
@@ -509,5 +530,6 @@ init_db()
 
 
 if __name__ == '__main__':
-    print("\n  Medication Assistant running at http://localhost:8000\n")
-    app.run(host='0.0.0.0', port=8000, debug=True)
+    port = int(os.getenv('PORT', '8000'))
+    print(f"\n  Medication Assistant running at http://localhost:{port}\n")
+    app.run(host='0.0.0.0', port=port, debug=True)
