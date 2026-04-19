@@ -3,3 +3,4 @@ __pycache__/
 data/chatbot.db
 .env
 .env.*
+!.env.example
