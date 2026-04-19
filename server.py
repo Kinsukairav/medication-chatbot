@@ -19,7 +19,11 @@ import json
 
 app = Flask(__name__)
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'chatbot.db')
+# Vercel serverless functions have a writable /tmp only.
+if os.environ.get('VERCEL'):
+    DB_PATH = '/tmp/chatbot.db'
+else:
+    DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'chatbot.db')
 
 
 def get_db():
@@ -500,7 +504,10 @@ def export_session_pdf(sid):
 
 # ── Boot ────────────────────────────────────────────────
 
+# Initialize database at import time so serverless cold starts work.
+init_db()
+
+
 if __name__ == '__main__':
-    init_db()
     print("\n  Medication Assistant running at http://localhost:8000\n")
     app.run(host='0.0.0.0', port=8000, debug=True)
