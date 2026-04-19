@@ -35,19 +35,34 @@
                     <span>Saved Chats</span>
                     <span class="material-symbols-outlined sidebar-toggle-icon" id="saved-toggle-icon">expand_more</span>
                 </button>
+                <button id="sidebar-calendar-btn" class="sidebar-link sidebar-nav-link" type="button">
+                    <span class="material-symbols-outlined">calendar_month</span>
+                    <span>Calendar</span>
+                </button>
             </div>
 
             <!-- Saved Chats Section -->
             <nav class="sidebar-sessions saved-sessions" id="starred-list"></nav>
 
+            <!-- Reminder mini calendar -->
+            <div class="sidebar-label" id="calendar-label">Quick Calendar</div>
+            <section class="sidebar-calendar" id="sidebar-calendar"></section>
+
             <!-- Recent / history -->
-            <div class="sidebar-label history-label" id="history-label">Chat History</div>
+            <div class="sidebar-label history-label" id="history-label">
+                <span>Chat History</span>
+                <button id="clear-history-btn" class="clear-history-btn" type="button" title="Clear all chat history">Clear All</button>
+            </div>
             <nav class="sidebar-sessions history-sessions" id="session-list"></nav>
 
             <div class="sidebar-bottom">
                 <button id="sidebar-settings-btn" class="sidebar-link">
                     <span class="material-symbols-outlined">settings</span>
                     API Settings
+                </button>
+                <button id="sidebar-about-btn" class="sidebar-link" style="margin-top:4px;">
+                    <span class="material-symbols-outlined">info</span>
+                    About
                 </button>
             </div>
         </aside>
@@ -66,6 +81,19 @@
                 </button>
                 <h1 class="header-title">Medication Assistant</h1>
                 <div class="header-controls">
+                    <div class="notif-bell-wrap">
+                        <button id="notif-bell-btn" class="icon-btn" title="Notifications">
+                            <span class="material-symbols-outlined">notifications</span>
+                        </button>
+                        <span class="notif-bell-badge" id="notif-bell-badge"></span>
+                        <div class="notif-dropdown" id="notif-dropdown">
+                            <div class="notif-dropdown-header">
+                                <h4>🔔 Notifications</h4>
+                                <button class="notif-clear-btn" id="notif-clear-btn">Clear all</button>
+                            </div>
+                            <div id="notif-dropdown-list"></div>
+                        </div>
+                    </div>
                     <button id="theme-toggle" class="icon-btn" title="Toggle theme">
                         <span class="material-symbols-outlined">dark_mode</span>
                     </button>
@@ -74,6 +102,165 @@
                     </button>
                 </div>
             </header>
+
+            <!-- Reminder dashboard -->
+            <section class="reminder-dashboard" id="reminder-dashboard">
+
+                <!-- ── Top Bar: Clock + Stats ── -->
+                <div class="cal-top-bar">
+                    <div class="cal-clock-card">
+                        <div class="cal-clock-time" id="cal-clock-time">--:--:--</div>
+                        <div class="cal-clock-date" id="cal-clock-date">Loading…</div>
+                    </div>
+                    <div class="cal-stats-strip">
+                        <div class="cal-stat-badge" id="stat-total">
+                            <span class="material-symbols-outlined">medication</span>
+                            <div class="cal-stat-info"><span class="cal-stat-num" id="stat-total-num">0</span><span class="cal-stat-label">Today</span></div>
+                        </div>
+                        <div class="cal-stat-badge taken" id="stat-taken">
+                            <span class="material-symbols-outlined">check_circle</span>
+                            <div class="cal-stat-info"><span class="cal-stat-num" id="stat-taken-num">0</span><span class="cal-stat-label">Taken</span></div>
+                        </div>
+                        <div class="cal-stat-badge upcoming" id="stat-next">
+                            <span class="material-symbols-outlined">schedule</span>
+                            <div class="cal-stat-info"><span class="cal-stat-num" id="stat-next-label">—</span><span class="cal-stat-label">Next Dose</span></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ── Main Content Area ── -->
+                <div class="cal-body">
+
+                    <!-- Left: Calendar Grid -->
+                    <div class="cal-calendar-card">
+                        <div class="reminder-card-head">
+                            <h2><span class="material-symbols-outlined" style="font-size:20px;vertical-align:middle;margin-right:6px;">calendar_month</span>Medication Calendar</h2>
+                            <div class="calendar-nav">
+                                <button id="calendar-prev" class="icon-btn cal-nav-btn" title="Previous month">
+                                    <span class="material-symbols-outlined">chevron_left</span>
+                                </button>
+                                <span id="calendar-month-label" class="calendar-month-label"></span>
+                                <button id="calendar-next" class="icon-btn cal-nav-btn" title="Next month">
+                                    <span class="material-symbols-outlined">chevron_right</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="calendar-grid calendar-weekdays" id="calendar-weekdays"></div>
+                        <div class="calendar-grid calendar-days" id="calendar-days"></div>
+
+                        <!-- Weekly Overview Strip -->
+                        <div class="cal-weekly-strip" id="cal-weekly-strip"></div>
+                    </div>
+
+                    <!-- Right: Day Detail + Add Form -->
+                    <div class="cal-side-panel">
+
+                        <!-- Day Detail Timeline -->
+                        <div class="cal-day-detail-card">
+                            <div class="cal-day-detail-head">
+                                <h3 id="selected-day-label">Selected Day Schedule</h3>
+                                <span class="cal-day-count" id="cal-day-count">0 meds</span>
+                            </div>
+                            <div id="today-reminders" class="today-reminders"></div>
+                        </div>
+
+                        <!-- Add Reminder Form -->
+                        <div class="cal-add-card">
+                            <div class="cal-add-card-head">
+                                <span class="material-symbols-outlined">add_circle</span>
+                                <h3>Add Medication Reminder</h3>
+                            </div>
+                            <form id="reminder-form" class="reminder-form">
+                                <input id="reminder-name" type="text" placeholder="Medicine name" required>
+                                <input id="reminder-dosage" type="text" placeholder="Dosage (e.g., 1 tablet)">
+                                <div class="reminder-form-row">
+                                    <div class="form-input-icon-wrap">
+                                        <input id="reminder-date" type="date" required>
+                                        <button type="button" class="form-input-icon-btn" id="date-picker-btn" title="Pick date">
+                                            <span class="material-symbols-outlined">calendar_today</span>
+                                        </button>
+                                    </div>
+                                    <div class="form-input-icon-wrap">
+                                        <input id="reminder-time" type="time" required>
+                                        <button type="button" class="form-input-icon-btn" id="time-picker-btn" title="Pick time">
+                                            <span class="material-symbols-outlined">schedule</span>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="reminder-form-row">
+                                    <select id="reminder-repeat">
+                                        <option value="once">Once</option>
+                                        <option value="daily">Daily</option>
+                                        <option value="weekly">Weekly</option>
+                                    </select>
+                                    <select id="reminder-color">
+                                        <option value="">Auto Color</option>
+                                        <option value="#2563eb">🔵 Blue</option>
+                                        <option value="#059669">🟢 Green</option>
+                                        <option value="#dc2626">🔴 Red</option>
+                                        <option value="#9333ea">🟣 Purple</option>
+                                        <option value="#c8710f">🟠 Orange</option>
+                                        <option value="#be185d">🩷 Pink</option>
+                                        <option value="#0f766e">🟢 Teal</option>
+                                        <option value="#ca8a04">🟡 Gold</option>
+                                    </select>
+                                </div>
+                                <textarea id="reminder-notes" rows="2" placeholder="Notes (optional)"></textarea>
+                                <button type="submit" class="btn-primary reminder-submit">
+                                    <span class="material-symbols-outlined" style="font-size:18px;vertical-align:middle;margin-right:4px;">alarm_add</span>
+                                    Save Reminder
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <div id="notification-stack" class="notification-stack"></div>
+
+            <!-- About View -->
+            <section class="about-view" id="about-view" style="display:none;">
+                <div class="about-header">
+                    <div class="about-icon">
+                        <span class="material-symbols-outlined">medication</span>
+                    </div>
+                    <h2>About Medication Assistant</h2>
+                    <p>Your comprehensive, privacy-first healthcare AI companion.</p>
+                </div>
+
+                <div class="about-features">
+                    <div class="feature-card">
+                        <div class="feature-icon"><span class="material-symbols-outlined">chat</span></div>
+                        <h3>Intelligent AI Chat</h3>
+                        <p>Ask questions about medications, side effects, dosages, and drug interactions using the powerful Gemini or OpenRouter APIs.</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon"><span class="material-symbols-outlined">calendar_month</span></div>
+                        <h3>Smart Medication Calendar</h3>
+                        <p>Keep track of your schedule natively. The AI can auto-extract medication timings from your chat and sync them instantly to your calendar.</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon"><span class="material-symbols-outlined">notifications_active</span></div>
+                        <h3>Global Notifications</h3>
+                        <p>Never miss a dose! The built-in chime and cross-page notification system keeps you alerted wherever you are in the application.</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon"><span class="material-symbols-outlined">center_focus_strong</span></div>
+                        <h3>Multimodal Input</h3>
+                        <p>Too tired to type? Use the microphone to ask voice questions, or upload an image of your prescription/medicine bottle for instant analysis.</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon"><span class="material-symbols-outlined">picture_as_pdf</span></div>
+                        <h3>PDF Export</h3>
+                        <p>Easily download a structured PDF report of your chats and health records to share directly with your doctor.</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon"><span class="material-symbols-outlined">dark_mode</span></div>
+                        <h3>Adaptive Dark Mode</h3>
+                        <p>A beautiful surface-elevated design system that reads perfectly day or night to reduce eye strain.</p>
+                    </div>
+                </div>
+            </section>
 
             <!-- Chat area -->
             <div class="chat-area" id="chat-area">

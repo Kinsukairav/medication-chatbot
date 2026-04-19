@@ -11,7 +11,6 @@ import base64
 import importlib
 import re
 from xml.sax.saxutils import escape as xml_escape
-import sqlite3
 import os
 import urllib.request
 import json
@@ -24,55 +23,20 @@ except ImportError:
 if load_dotenv:
     load_dotenv()
 
+# Import Supabase
+from supabase import create_client, Client
+
+# Initialize Supabase client
+SUPABASE_URL = os.getenv('SUPABASE_URL')
+SUPABASE_ANON_KEY = os.getenv('SUPABASE_ANON_KEY')
+
+if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+    raise ValueError("❌ SUPABASE_URL and SUPABASE_ANON_KEY must be set in .env file")
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+
 
 app = Flask(__name__)
-
-# Vercel serverless functions have a writable /tmp only.
-if os.environ.get('VERCEL'):
-    DB_PATH = '/tmp/chatbot.db'
-else:
-    DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'chatbot.db')
-
-
-def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
-
-
-def init_db():
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    conn = get_db()
-    conn.executescript('''
-        CREATE TABLE IF NOT EXISTS chats (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL DEFAULT 'New Chat',
-            is_favorite INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL DEFAULT (datetime('now'))
-        );
-        CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            chat_id INTEGER NOT NULL,
-            role TEXT NOT NULL,
-            content TEXT NOT NULL DEFAULT '',
-            image_data TEXT,
-            provider_mode TEXT,
-            created_at TEXT NOT NULL DEFAULT (datetime('now')),
-            FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
-        );
-    ''')
-    # Safe migration: add is_favorite if missing (existing DBs)
-    try:
-        conn.execute('SELECT is_favorite FROM chats LIMIT 1')
-    except sqlite3.OperationalError:
-        conn.execute('ALTER TABLE chats ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0')
-    try:
-        conn.execute('SELECT provider_mode FROM messages LIMIT 1')
-    except sqlite3.OperationalError:
-        conn.execute('ALTER TABLE messages ADD COLUMN provider_mode TEXT')
-    conn.commit()
-    conn.close()
 
 
 # ── Routes ──────────────────────────────────────────────
@@ -99,51 +63,60 @@ def runtime_config_js():
 
 @app.route('/api/sessions', methods=['GET'])
 def list_sessions():
-    conn = get_db()
-    rows = conn.execute(
-        'SELECT id, title, is_favorite, created_at FROM chats ORDER BY is_favorite DESC, created_at DESC'
-    ).fetchall()
-    conn.close()
-    return jsonify([dict(r) for r in rows])
+    try:
+        response = supabase.table('chats').select('*').order('is_favorite', desc=True).order('created_at', desc=True).execute()
+        return jsonify(response.data)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/sessions', methods=['POST'])
 def create_session():
-    conn = get_db()
-    cur = conn.execute("INSERT INTO chats (title) VALUES ('New Chat')")
-    sid = cur.lastrowid
-    conn.commit()
-    row = conn.execute(
-        'SELECT id, title, is_favorite, created_at FROM chats WHERE id = ?', (sid,)
-    ).fetchone()
-    conn.close()
-    return jsonify(dict(row)), 201
+    try:
+        response = supabase.table('chats').insert({'title': 'New Chat'}).execute()
+        if response.data and len(response.data) > 0:
+            return jsonify(response.data[0]), 201
+        return jsonify({'error': 'Failed to create session'}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/sessions', methods=['DELETE'])
+def delete_all_sessions():
+    try:
+        # Deletes all chats; messages are removed by ON DELETE CASCADE.
+        supabase.table('chats').delete().gt('id', 0).execute()
+        return jsonify({'status': 'all_deleted'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/sessions/<int:sid>', methods=['PATCH'])
 def update_session(sid):
-    data = request.get_json(force=True)
-    conn = get_db()
-    if 'title' in data:
-        conn.execute('UPDATE chats SET title = ? WHERE id = ?', (data['title'], sid))
-    if 'is_favorite' in data:
-        conn.execute('UPDATE chats SET is_favorite = ? WHERE id = ?', (int(data['is_favorite']), sid))
-    conn.commit()
-    row = conn.execute(
-        'SELECT id, title, is_favorite, created_at FROM chats WHERE id = ?', (sid,)
-    ).fetchone()
-    conn.close()
-    return jsonify(dict(row))
+    try:
+        data = request.get_json(force=True)
+        update_data = {}
+        if 'title' in data:
+            update_data['title'] = data['title']
+        if 'is_favorite' in data:
+            update_data['is_favorite'] = bool(data['is_favorite'])
+        
+        response = supabase.table('chats').update(update_data).eq('id', sid).execute()
+        if response.data and len(response.data) > 0:
+            return jsonify(response.data[0])
+        return jsonify({'error': 'Session not found'}), 404
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/sessions/<int:sid>', methods=['DELETE'])
 def delete_session(sid):
-    conn = get_db()
-    conn.execute('DELETE FROM messages WHERE chat_id = ?', (sid,))
-    conn.execute('DELETE FROM chats WHERE id = ?', (sid,))
-    conn.commit()
-    conn.close()
-    return jsonify({'status': 'deleted'})
+    try:
+        # Supabase handles cascade deletion automatically via foreign key
+        supabase.table('chats').delete().eq('id', sid).execute()
+        return jsonify({'status': 'deleted'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 # ── Smart Title Generation ──────────────────────────────
@@ -158,10 +131,10 @@ def generate_title(sid):
     if not user_message or not api_key:
         # Fallback: truncate the message
         title = user_message[:40] + ('…' if len(user_message) > 40 else '')
-        conn = get_db()
-        conn.execute('UPDATE chats SET title = ? WHERE id = ?', (title, sid))
-        conn.commit()
-        conn.close()
+        try:
+            supabase.table('chats').update({'title': title}).eq('id', sid).execute()
+        except Exception as e:
+            print(f"Error updating chat title: {e}")
         return jsonify({'title': title})
 
     try:
@@ -185,10 +158,11 @@ def generate_title(sid):
         # Fallback on any error
         title = user_message[:40] + ('…' if len(user_message) > 40 else '')
 
-    conn = get_db()
-    conn.execute('UPDATE chats SET title = ? WHERE id = ?', (title, sid))
-    conn.commit()
-    conn.close()
+    try:
+        supabase.table('chats').update({'title': title}).eq('id', sid).execute()
+    except Exception as e:
+        print(f"Error updating chat title in Supabase: {e}")
+    
     return jsonify({'title': title})
 
 
@@ -196,31 +170,33 @@ def generate_title(sid):
 
 @app.route('/api/sessions/<int:sid>/messages', methods=['GET'])
 def get_messages(sid):
-    conn = get_db()
-    rows = conn.execute(
-        'SELECT id, chat_id, role, content, image_data, provider_mode, created_at '
-        'FROM messages WHERE chat_id = ? ORDER BY created_at ASC', (sid,)
-    ).fetchall()
-    conn.close()
-    return jsonify([dict(r) for r in rows])
+    try:
+        response = supabase.table('messages').select('*').eq('chat_id', sid).order('created_at', desc=False).execute()
+        return jsonify(response.data)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/sessions/<int:sid>/messages', methods=['POST'])
 def save_message(sid):
-    data = request.get_json(force=True)
-    role = data.get('role', 'user')
-    content = data.get('content', '')
-    image_data = data.get('image_data')          # full data-URL or None
-    provider_mode = data.get('provider_mode')
+    try:
+        data = request.get_json(force=True)
+        role = data.get('role', 'user')
+        content = data.get('content', '')
+        image_data = data.get('image_data')          # full data-URL or None
+        provider_mode = data.get('provider_mode')
 
-    conn = get_db()
-    conn.execute(
-        'INSERT INTO messages (chat_id, role, content, image_data, provider_mode) VALUES (?, ?, ?, ?, ?)',
-        (sid, role, content, image_data, provider_mode)
-    )
-    conn.commit()
-    conn.close()
-    return jsonify({'status': 'saved'}), 201
+        message_data = {
+            'chat_id': sid,
+            'role': role,
+            'content': content,
+            'image_data': image_data,
+            'provider_mode': provider_mode
+        }
+        supabase.table('messages').insert(message_data).execute()
+        return jsonify({'status': 'saved'}), 201
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 def _sanitize_filename(name):
@@ -320,19 +296,16 @@ def export_session_pdf(sid):
     SimpleDocTemplate = platypus_module.SimpleDocTemplate
     Image = platypus_module.Image
 
-    conn = get_db()
-    session = conn.execute(
-        'SELECT id, title, created_at FROM chats WHERE id = ?', (sid,)
-    ).fetchone()
-    if not session:
-        conn.close()
-        return jsonify({'error': 'Session not found'}), 404
+    try:
+        session_response = supabase.table('chats').select('*').eq('id', sid).execute()
+        if not session_response.data or len(session_response.data) == 0:
+            return jsonify({'error': 'Session not found'}), 404
+        session = session_response.data[0]
 
-    messages = conn.execute(
-        'SELECT role, content, image_data, provider_mode, created_at FROM messages WHERE chat_id = ? ORDER BY created_at ASC, id ASC',
-        (sid,)
-    ).fetchall()
-    conn.close()
+        messages_response = supabase.table('messages').select('*').eq('chat_id', sid).order('created_at', desc=False).order('id', desc=False).execute()
+        messages = messages_response.data
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
     if not messages:
         return jsonify({'error': 'No messages to export'}), 400
@@ -524,9 +497,8 @@ def export_session_pdf(sid):
 
 
 # ── Boot ────────────────────────────────────────────────
-
-# Initialize database at import time so serverless cold starts work.
-init_db()
+# Database schema is managed in Supabase dashboard
+# No initialization needed at runtime
 
 
 if __name__ == '__main__':
