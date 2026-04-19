@@ -27,8 +27,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const removeAttach   = $('remove-attachment');
     const apiSelector    = $('api-selector');
     const settingsModal  = $('settings-modal');
-    const geminiKeyIn    = $('gemini-key');
-    const openrouterKeyIn= $('openrouter-key');
     const themeToggle    = $('theme-toggle');
     const exportPdfBtn   = $('export-pdf-btn');
     const modelSwitchBtn = $('model-switch-btn');
@@ -69,8 +67,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const notifDropdown = $('notif-dropdown');
     const notifDropdownList = $('notif-dropdown-list');
     const notifClearBtn = $('notif-clear-btn');
-    const datePickerBtn = $('date-picker-btn');
-    const timePickerBtn = $('time-picker-btn');
 
     // ── State ───────────────────────────────────────────
     let activeSessionId = null;
@@ -95,11 +91,9 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentView = 'chat';
     let notifHistory = JSON.parse(localStorage.getItem('notif_history') || '[]');
 
-    // ── API keys (config.js → localStorage fallback) ───
-    let geminiKey     = window.APP_CONFIG?.GEMINI_API_KEY   || localStorage.getItem('geminiKey') || '';
-    let openrouterKey = window.APP_CONFIG?.OPENROUTER_API_KEY || localStorage.getItem('openrouterKey') || '';
-    geminiKeyIn.value     = geminiKey;
-    openrouterKeyIn.value = openrouterKey;
+    // ── Cleanup deprecated client-side key storage ─────
+    localStorage.removeItem('geminiKey');
+    localStorage.removeItem('openrouterKey');
 
     // ── Theme Toggle ────────────────────────────────────
     const savedTheme = localStorage.getItem('theme') || 'light';
@@ -149,13 +143,10 @@ document.addEventListener('DOMContentLoaded', () => {
     $('close-modal-x').addEventListener('click', closeSettings);
     settingsModal.addEventListener('click', e => { if (e.target === settingsModal) closeSettings(); });
 
-    $('save-keys-btn').addEventListener('click', () => {
-        geminiKey = geminiKeyIn.value.trim();
-        openrouterKey = openrouterKeyIn.value.trim();
-        localStorage.setItem('geminiKey', geminiKey);
-        localStorage.setItem('openrouterKey', openrouterKey);
-        closeSettings();
-    });
+    const saveServerConfigBtn = $('save-server-config-btn');
+    if (saveServerConfigBtn) {
+        saveServerConfigBtn.addEventListener('click', closeSettings);
+    }
 
     // ── Sidebar toggle ──────────────────────────────────
     sidebarToggle.addEventListener('click', () => {
@@ -982,18 +973,6 @@ document.addEventListener('DOMContentLoaded', () => {
         updateLiveClock();
         setInterval(updateLiveClock, 1000);
 
-        // Date/time picker icon handlers
-        if (datePickerBtn && reminderDate) {
-            datePickerBtn.addEventListener('click', () => {
-                reminderDate.showPicker ? reminderDate.showPicker() : reminderDate.focus();
-            });
-        }
-        if (timePickerBtn && reminderTime) {
-            timePickerBtn.addEventListener('click', () => {
-                reminderTime.showPicker ? reminderTime.showPicker() : reminderTime.focus();
-            });
-        }
-
         // Notification bell toggle
         if (notifBellBtn) {
             notifBellBtn.addEventListener('click', (e) => {
@@ -1554,10 +1533,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const res = await fetch(`/api/sessions/${sessionId}/generate-title`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    message: message,
-                    api_key: geminiKey
-                })
+                body: JSON.stringify({ message: message })
             });
             if (res.ok) {
                 await loadSessions();
@@ -1619,12 +1595,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             const apiMode = apiSelector.value;
-            const key = apiMode === 'gemini' ? geminiKey : openrouterKey;
             const fn  = apiMode === 'gemini'
                 ? window.fetchGeminiResponse
                 : window.fetchOpenRouterResponse;
 
-            let reply = await fn(chatHistory, _fileText, _imageB64, key);
+            let reply = await fn(chatHistory, _fileText, _imageB64);
 
             // Handle hidden calendar actions
             if (reply.includes('[ACTION: CLEAR_CALENDAR]')) {

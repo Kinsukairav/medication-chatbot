@@ -176,15 +176,9 @@
                                 <div class="reminder-form-row">
                                     <div class="form-input-icon-wrap">
                                         <input id="reminder-date" type="date" required>
-                                        <button type="button" class="form-input-icon-btn" id="date-picker-btn" title="Pick date">
-                                            <span class="material-symbols-outlined">calendar_today</span>
-                                        </button>
                                     </div>
                                     <div class="form-input-icon-wrap">
                                         <input id="reminder-time" type="time" required>
-                                        <button type="button" class="form-input-icon-btn" id="time-picker-btn" title="Pick time">
-                                            <span class="material-symbols-outlined">schedule</span>
-                                        </button>
                                     </div>
                                 </div>
                                 <div class="reminder-form-row">
@@ -355,15 +349,15 @@
                         class="material-symbols-outlined">close</span></button>
             </div>
             <div class="form-group">
-                <label for="gemini-key">Gemini API Key</label>
-                <input type="password" id="gemini-key" placeholder="AIza…">
-            </div>
-            <div class="form-group">
-                <label for="openrouter-key">OpenRouter API Key</label>
-                <input type="password" id="openrouter-key" placeholder="sk-or-…">
+                <label>Secure Server-Side Keys Enabled</label>
+                <p style="margin:8px 0 0;color:var(--text-secondary);font-size:0.95rem;line-height:1.5;">
+                    API keys are now read from server environment variables only.
+                    Configure <strong>GEMINI_API_KEY</strong> and <strong>OPENROUTER_API_KEY</strong>
+                    in your local <strong>.env</strong> file or in Vercel Project Settings.
+                </p>
             </div>
             <div class="modal-actions">
-                <button id="save-keys-btn" class="btn-primary">Save Keys</button>
+                <button id="save-server-config-btn" class="btn-primary">Done</button>
                 <button id="close-modal-btn" class="btn-secondary">Cancel</button>
             </div>
         </div>
@@ -375,8 +369,6 @@
         <option value="openrouter" selected>OpenRouter</option>
     </select>
 
-    <script src="/api/runtime-config.js"></script>
-    <script src="/static/js/config.js"></script>
     <script src="/static/js/gemini.js"></script>
     <script src="/static/js/openrouter.js"></script>
     <script src="/static/js/main.js"></script>

@@ -43,15 +43,13 @@ RULES:
 5. Format responses cleanly with numbered lists and bold text where helpful.`;
 
 /**
- * Call OpenRouter API.
+ * Call OpenRouter via server proxy.
  * @param {Array} messages  – chat history [{role, content}]
  * @param {string|null} fileText  – extracted text from a document
  * @param {string|null} imageBase64 – full data-URL of an image
- * @param {string} apiKey
  * @returns {Promise<string>} assistant reply
  */
-window.fetchOpenRouterResponse = async function (messages, fileText, imageBase64, apiKey) {
-    if (!apiKey) throw new Error("OpenRouter API Key is missing. Add it via Settings.");
+window.fetchOpenRouterResponse = async function (messages, fileText, imageBase64) {
 
     // Truncate file text
     if (fileText && fileText.length > 8000) {
@@ -96,13 +94,10 @@ window.fetchOpenRouterResponse = async function (messages, fileText, imageBase64
         ]
     };
 
-    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    const res = await fetch('/api/ai/openrouter', {
         method: "POST",
         headers: {
-            "Authorization": `Bearer ${apiKey}`,
-            "Content-Type": "application/json",
-            "HTTP-Referer": location.href,
-            "X-Title": "Medication Assistant"
+            "Content-Type": "application/json"
         },
         body: JSON.stringify(body)
     });

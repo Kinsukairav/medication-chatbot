@@ -13,6 +13,8 @@ import re
 from xml.sax.saxutils import escape as xml_escape
 import os
 import urllib.request
+import urllib.error
+import urllib.parse
 import json
 
 try:
@@ -46,17 +48,71 @@ def index():
     return render_template('index.html')
 
 
-@app.route('/api/runtime-config.js')
-def runtime_config_js():
-    gemini_key = json.dumps(os.getenv('GEMINI_API_KEY', ''))
-    openrouter_key = json.dumps(os.getenv('OPENROUTER_API_KEY', ''))
-    script = (
-        'window.APP_CONFIG = {'
-        f'GEMINI_API_KEY: {gemini_key}, '
-        f'OPENROUTER_API_KEY: {openrouter_key}'
-        '};'
+@app.route('/api/ai/gemini', methods=['POST'])
+def proxy_gemini():
+    """Proxy Gemini calls so API keys are never exposed to the browser."""
+    api_key = (os.getenv('GEMINI_API_KEY') or '').strip()
+    if not api_key:
+        return jsonify({'error': {'message': 'GEMINI_API_KEY is not configured on the server.'}}), 500
+
+    data = request.get_json(force=True) or {}
+    payload = {
+        'systemInstruction': data.get('systemInstruction'),
+        'contents': data.get('contents', [])
+    }
+
+    endpoint = (
+        'https://generativelanguage.googleapis.com/v1beta/models/'
+        f'gemini-2.5-flash:generateContent?key={urllib.parse.quote(api_key, safe="")}'
     )
-    return app.response_class(script, mimetype='application/javascript')
+
+    req = urllib.request.Request(
+        endpoint,
+        data=json.dumps(payload).encode('utf-8'),
+        headers={'Content-Type': 'application/json'},
+        method='POST'
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = resp.read()
+            return app.response_class(body, status=resp.status, mimetype='application/json')
+    except urllib.error.HTTPError as err:
+        error_body = err.read()
+        return app.response_class(error_body, status=err.code, mimetype='application/json')
+    except Exception as err:
+        return jsonify({'error': {'message': f'Gemini proxy failed: {str(err)}'}}), 500
+
+
+@app.route('/api/ai/openrouter', methods=['POST'])
+def proxy_openrouter():
+    """Proxy OpenRouter calls so API keys are never exposed to the browser."""
+    api_key = (os.getenv('OPENROUTER_API_KEY') or '').strip()
+    if not api_key:
+        return jsonify({'error': {'message': 'OPENROUTER_API_KEY is not configured on the server.'}}), 500
+
+    data = request.get_json(force=True) or {}
+    req = urllib.request.Request(
+        'https://openrouter.ai/api/v1/chat/completions',
+        data=json.dumps(data).encode('utf-8'),
+        headers={
+            'Authorization': f'Bearer {api_key}',
+            'Content-Type': 'application/json',
+            'HTTP-Referer': request.host_url.rstrip('/'),
+            'X-Title': 'Medication Assistant'
+        },
+        method='POST'
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=40) as resp:
+            body = resp.read()
+            return app.response_class(body, status=resp.status, mimetype='application/json')
+    except urllib.error.HTTPError as err:
+        error_body = err.read()
+        return app.response_class(error_body, status=err.code, mimetype='application/json')
+    except Exception as err:
+        return jsonify({'error': {'message': f'OpenRouter proxy failed: {str(err)}'}}), 500
 
 
 # ── Session CRUD ────────────────────────────────────────
@@ -126,7 +182,7 @@ def generate_title(sid):
     """Use Gemini to create a 2-3 word topic title from the first user message."""
     data = request.get_json(force=True)
     user_message = data.get('message', '')
-    api_key = data.get('api_key', '')
+    api_key = (os.getenv('GEMINI_API_KEY') or '').strip()
 
     if not user_message or not api_key:
         # Fallback: truncate the message

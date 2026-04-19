@@ -62,6 +62,11 @@ SUPABASE_URL=https://your-project-id.supabase.co
 SUPABASE_ANON_KEY=your-supabase-anon-key
 PORT=8000
 
+Important:
+- Do not store API keys in frontend files.
+- Do not put API keys in browser localStorage.
+- This project now uses server-side AI proxy routes so secrets stay private.
+
 ## Supabase Setup
 
 Use the SQL below in Supabase SQL Editor.
@@ -120,19 +125,41 @@ Messages
 Export
 - GET /api/sessions/<sid>/export
 
-Config
-- GET /api/runtime-config.js
+AI Proxy (server-side keys)
+- POST /api/ai/gemini
+- POST /api/ai/openrouter
+
+## Secure Migration Checklist
+
+If your keys were exposed earlier, do this once:
+
+1. Rotate Gemini and OpenRouter keys in their dashboards.
+2. Remove old keys from local files and browser storage.
+3. Set new keys only in `.env` (local) and Vercel Environment Variables (production).
+4. Restart local server and redeploy Vercel.
 
 ## Deploy (Vercel)
 
-- Set required environment variables in Vercel project settings:
+1. Push code to GitHub.
+2. Import the repo in Vercel.
+3. In Vercel Project Settings -> Environment Variables, add:
   - GEMINI_API_KEY
   - OPENROUTER_API_KEY
   - SUPABASE_URL
   - SUPABASE_ANON_KEY
   - PORT (optional)
+4. Keep `vercel.json` as-is (entrypoint: `api/index.py`).
+5. Deploy.
 
-The serverless entrypoint is api/index.py.
+## Supabase Setup (Production)
+
+1. Create project in Supabase.
+2. Run the SQL from this README in SQL Editor to create `chats` and `messages`.
+3. Copy values from Project Settings -> API:
+  - Project URL -> `SUPABASE_URL`
+  - anon public key -> `SUPABASE_ANON_KEY`
+4. Add these values to local `.env` and Vercel Environment Variables.
+5. Verify by creating a chat in the app and checking rows in `chats` and `messages`.
 
 ## Notes
 

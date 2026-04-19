@@ -43,15 +43,13 @@ RULES:
 5. Format responses cleanly with numbered lists and bold text where helpful.`;
 
 /**
- * Call Gemini API.
+ * Call Gemini via server proxy.
  * @param {Array} messages  – chat history [{role, content}]
  * @param {string|null} fileText  – extracted text from a document
  * @param {string|null} imageBase64 – full data-URL of an image
- * @param {string} apiKey
  * @returns {Promise<string>} assistant reply
  */
-window.fetchGeminiResponse = async function (messages, fileText, imageBase64, apiKey) {
-    if (!apiKey) throw new Error("Gemini API Key is missing. Add it via Settings.");
+window.fetchGeminiResponse = async function (messages, fileText, imageBase64) {
 
     // Build contents array in Gemini format
     const contents = messages
@@ -90,9 +88,7 @@ window.fetchGeminiResponse = async function (messages, fileText, imageBase64, ap
     // Keep only last 20 turns to avoid overflow
     const trimmed = contents.length > 20 ? contents.slice(-20) : contents;
 
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
-
-    const res = await fetch(endpoint, {
+    const res = await fetch('/api/ai/gemini', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
