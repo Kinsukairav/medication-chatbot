@@ -86,7 +86,11 @@ window.fetchGeminiResponse = async function (messages, fileText, imageBase64) {
     }
 
     // Keep only last 20 turns to avoid overflow
-    const trimmed = contents.length > 20 ? contents.slice(-20) : contents;
+    let trimmed = contents.length > 20 ? contents.slice(-20) : contents;
+    // Gemini API requires the first message to be 'user' role
+    while (trimmed.length && trimmed[0].role !== 'user') {
+        trimmed = trimmed.slice(1);
+    }
 
     const res = await fetch('/api/ai/gemini', {
         method: 'POST',

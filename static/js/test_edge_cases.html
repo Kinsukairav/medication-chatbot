@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Edge Case Tests — Medication Chatbot</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #1a1a2e; color: #e0e0e0; padding: 24px; }
+        h1 { color: #e94560; }
+        h2 { color: #0f3460; background: #16213e; padding: 10px 16px; border-radius: 8px; margin-top: 32px; }
+        .test { padding: 6px 0; border-bottom: 1px solid #16213e; display: flex; align-items: center; gap: 10px; }
+        .pass { color: #2ecc71; font-weight: bold; }
+        .fail { color: #e74c3c; font-weight: bold; }
+        .label { color: #bbb; min-width: 300px; }
+        .value { color: #ddd; font-family: monospace; }
+        .summary { margin-top: 32px; font-size: 1.2em; padding: 16px; border-radius: 8px; }
+        .summary.all-pass { background: #1a3a2a; border: 2px solid #2ecc71; }
+        .summary.has-fail { background: #3a1a1a; border: 2px solid #e74c3c; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Medication Chatbot — Edge Case Tests</h1>
+    <div id="results"></div>
+    <div id="summary"></div>
+
+    <script>
+    // ══════════════════════════════════════════════════════
+    // Copy the functions under test from main.js
+    // ══════════════════════════════════════════════════════
+
+    const KNOWN_DRUGS_RE = /paracetamol|ibuprofen|amoxicillin|aspirin|metformin|omeprazole|atorvastatin|cetirizine|azithromycin|ciprofloxacin|pantoprazole|crocin|dolo|combiflam|augmentin|calpol|disprin|ecosprin|glycomet|montair|montelukast|levocetirizine|ranitidine|domperidone|ondansetron|diclofenac|aceclofenac|losartan|amlodipine|telmisartan/i;
+
+    function normalizeTimeToken(token) {
+        if (!token) return null;
+        let t = token.trim().toLowerCase();
+        t = t.replace(/a\.\s?m\.?/g, 'am').replace(/p\.\s?m\.?/g, 'pm');
+        t = t.replace(/^(\d{1,2})\.(\d{2})/, '$1:$2');
+        t = t.replace(/\s+/g, ' ').trim();
+        const bare24 = t.match(/^(\d{1,2}):(\d{2})$/);
+        if (bare24) {
+            return `${String(bare24[1]).padStart(2, '0')}:${bare24[2]}`;
+        }
+        const m = t.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/);
+        if (!m) return null;
+        let h = Number(m[1]);
+        const min = Number(m[2] || 0);
+        const ap = m[3];
+        if (ap === 'pm' && h < 12) h += 12;
+        if (ap === 'am' && h === 12) h = 0;
+        return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+    }
+
+    function toDateKey(dateObj) {
+        const y = dateObj.getFullYear();
+        const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+        const d = String(dateObj.getDate()).padStart(2, '0');
+        return `${y}-${m}-${d}`;
+    }
+
+    function parseDateKey(dateKey) {
+        const [y, m, d] = dateKey.split('-').map(Number);
+        return new Date(y, (m || 1) - 1, d || 1);
+    }
+
+    function timeToMinutes(t) {
+        const [h, m] = (t || '00:00').split(':').map(Number);
+        return (h || 0) * 60 + (m || 0);
+    }
+
+    function detectDateFromText(text) {
+        const lower = (text || '').toLowerCase();
+        const today = new Date();
+        if (lower.includes('tomorrow')) {
+            const d = new Date(today);
+            d.setDate(d.getDate() + 1);
+            return toDateKey(d);
+        }
+        return toDateKey(today);
+    }
+
+    function reminderOccursOnDate(reminder, dateObj) {
+        const dateKey = toDateKey(dateObj);
+        const start = parseDateKey(reminder.date);
+        const current = parseDateKey(dateKey);
+        start.setHours(12, 0, 0, 0);
+        current.setHours(12, 0, 0, 0);
+        if (current < start) return false;
+        if (reminder.repeat === 'daily') return true;
+        if (reminder.repeat === 'weekly') {
+            const diffDays = Math.round((current - start) / (1000 * 60 * 60 * 24));
+            return diffDays % 7 === 0;
+        }
+        return reminder.date === dateKey;
+    }
+
+    function shouldAutoExtractReminders(text) {
+        const value = (text || '').toLowerCase();
+        const hasTime = /\b\d{1,2}[:.]\d{2}\b|\b\d{1,2}(?:[:.]\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)\b/i.test(value);
+        const hasMedicationContext = KNOWN_DRUGS_RE.test(value) || /medicine|medication|tablet|capsule|syrup|dose|dosage|prescription|reminder|take|mg|ml|mcg|before food|after food|before meal|after meal|twice a day|three times|thrice|once daily|every \d+ hours|morning|evening|night|bedtime/.test(value);
+        return hasTime && hasMedicationContext;
+    }
+
+    function parseReminderCandidates(rawText) {
+        const text = (rawText || '').slice(0, 7000);
+        if (!text.trim()) return [];
+        const sentences = text.split(/\n|(?<=\w)\.\s|;/).map(s => s.trim()).filter(Boolean);
+        const results = [];
+
+        for (const sentence of sentences) {
+            const timeMatches = sentence.match(/\b\d{1,2}[:.]\d{2}\b|\b\d{1,2}(?:[:.]\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)\b/gi) || [];
+            if (!timeMatches.length) continue;
+
+            let repeat = 'once';
+            if (/daily|every day|everyday|each day|once daily|twice daily|twice a day/i.test(sentence)) repeat = 'daily';
+            else if (/weekly|every week|once a week/i.test(sentence)) repeat = 'weekly';
+
+            const dosageMatch = sentence.match(/\b\d+\s?(mg|ml|mcg|g|tablet(?:s)?|capsule(?:s)?|drops?)\b/i);
+            const dosage = dosageMatch ? dosageMatch[0] : '';
+
+            let medName = '';
+            const boldMatch = sentence.match(/\*\*([^*]+)\*\*/);
+            if (boldMatch) {
+                medName = boldMatch[1].trim();
+            }
+
+            if (!medName) {
+                const drugMatch = sentence.match(KNOWN_DRUGS_RE);
+                if (drugMatch) {
+                    medName = drugMatch[0].charAt(0).toUpperCase() + drugMatch[0].slice(1).toLowerCase();
+                }
+            }
+
+            for (const tm of timeMatches) {
+                const normTime = normalizeTimeToken(tm);
+                if (!normTime) continue;
+                const date = detectDateFromText(sentence);
+
+                let name = medName;
+                if (!name) {
+                    const beforeTime = sentence.split(tm)[0] || sentence;
+                    const cleaned = beforeTime
+                        .replace(/\*\*/g, '')
+                        .replace(/\b(take|set|add|medicine|medication|reminder|at|for|please|timing|time|and|the|your|should|can|you|i|my)\b/gi, ' ')
+                        .replace(/\s+/g, ' ')
+                        .trim();
+                    name = cleaned.split(' ').slice(-3).join(' ').trim();
+                    if (!name || name.length < 2) name = 'Medication';
+                }
+
+                name = name.replace(/^\d+[.)]\s*/, '').replace(/\*\*/g, '').trim();
+                if (!name) name = 'Medication';
+
+                results.push({ name, dosage, date, time: normTime, repeat, notes: sentence.replace(/\*\*/g, '') });
+            }
+        }
+
+        const unique = [];
+        const seen = new Set();
+        results.forEach(r => {
+            const key = `${r.name.toLowerCase()}|${r.date}|${r.time}|${r.repeat}`;
+            if (seen.has(key)) return;
+            seen.add(key);
+            unique.push(r);
+        });
+        return unique;
+    }
+
+
+    // ══════════════════════════════════════════════════════
+    // Test runner
+    // ══════════════════════════════════════════════════════
+
+    let totalTests = 0;
+    let passedTests = 0;
+    const resultsDiv = document.getElementById('results');
+
+    function section(title) {
+        const h = document.createElement('h2');
+        h.textContent = title;
+        resultsDiv.appendChild(h);
+    }
+
+    function test(label, actual, expected) {
+        totalTests++;
+        const pass = JSON.stringify(actual) === JSON.stringify(expected);
+        if (pass) passedTests++;
+        const div = document.createElement('div');
+        div.className = 'test';
+        div.innerHTML = `
+            <span class="${pass ? 'pass' : 'fail'}">${pass ? '✅ PASS' : '❌ FAIL'}</span>
+            <span class="label">${label}</span>
+            <span class="value">${pass ? JSON.stringify(actual) : `got ${JSON.stringify(actual)}, expected ${JSON.stringify(expected)}`}</span>
+        `;
+        resultsDiv.appendChild(div);
+    }
+
+
+    // ══════════════════════════════════════════════════════
+    // 1️⃣ normalizeTimeToken
+    // ══════════════════════════════════════════════════════
+    section('1️⃣ normalizeTimeToken');
+
+    // Basic 12h formats
+    test('8am → 08:00',                normalizeTimeToken('8am'),       '08:00');
+    test('8 am → 08:00',               normalizeTimeToken('8 am'),      '08:00');
+    test('8AM → 08:00',                 normalizeTimeToken('8AM'),       '08:00');
+    test('8:00 AM → 08:00',            normalizeTimeToken('8:00 AM'),   '08:00');
+    test('8:30am → 08:30',             normalizeTimeToken('8:30am'),    '08:30');
+    test('8:30 pm → 20:30',            normalizeTimeToken('8:30 pm'),   '20:30');
+    test('12pm → 12:00 (noon)',         normalizeTimeToken('12pm'),      '12:00');
+    test('12am → 00:00 (midnight)',     normalizeTimeToken('12am'),      '00:00');
+    test('12:30 AM → 00:30',           normalizeTimeToken('12:30 AM'),  '00:30');
+    test('1pm → 13:00',                 normalizeTimeToken('1pm'),       '13:00');
+    test('11:59 PM → 23:59',           normalizeTimeToken('11:59 PM'),  '23:59');
+
+    // Dot-separated times
+    test('8.30 am → 08:30',            normalizeTimeToken('8.30 am'),   '08:30');
+    test('8.30am → 08:30',             normalizeTimeToken('8.30am'),    '08:30');
+    test('3.00 PM → 15:00',            normalizeTimeToken('3.00 PM'),   '15:00');
+
+    // Period-style AM/PM
+    test('3:00 p.m. → 15:00',          normalizeTimeToken('3:00 p.m.'), '15:00');
+    test('8:00 a.m. → 08:00',          normalizeTimeToken('8:00 a.m.'), '08:00');
+    test('8 a.m. → 08:00',             normalizeTimeToken('8 a.m.'),    '08:00');
+
+    // Bare 24h format with padding
+    test('0:00 → 00:00 (padded)',       normalizeTimeToken('0:00'),      '00:00');
+    test('9:05 → 09:05 (padded)',       normalizeTimeToken('9:05'),      '09:05');
+    test('13:00 → 13:00',              normalizeTimeToken('13:00'),     '13:00');
+    test('23:59 → 23:59',              normalizeTimeToken('23:59'),     '23:59');
+
+    // Double space
+    test('8  AM → 08:00 (double space)', normalizeTimeToken('8  AM'),    '08:00');
+
+    // Invalid inputs
+    test('null → null',                 normalizeTimeToken(null),        null);
+    test('"" → null',                   normalizeTimeToken(''),          null);
+    test('"invalid" → null',            normalizeTimeToken('invalid'),   null);
+    test('"25:00" → 25:00 (passed through)', normalizeTimeToken('25:00'), '25:00'); // no validation of range, just padding
+
+
+    // ══════════════════════════════════════════════════════
+    // 2️⃣ detectDateFromText
+    // ══════════════════════════════════════════════════════
+    section('2️⃣ detectDateFromText');
+
+    const todayKey = toDateKey(new Date());
+    const tmrw = new Date(); tmrw.setDate(tmrw.getDate() + 1);
+    const tmrwKey = toDateKey(tmrw);
+
+    test('plain text → today',           detectDateFromText('Take ibuprofen at 8am'),   todayKey);
+    test('"tomorrow" → tomorrow date',   detectDateFromText('Take it tomorrow at 9am'), tmrwKey);
+    test('empty → today',                detectDateFromText(''),                          todayKey);
+    test('null → today',                 detectDateFromText(null),                        todayKey);
+
+
+    // ══════════════════════════════════════════════════════
+    // 3️⃣ reminderOccursOnDate
+    // ══════════════════════════════════════════════════════
+    section('3️⃣ reminderOccursOnDate');
+
+    // Once
+    test('once: exact date → true', reminderOccursOnDate(
+        { date: '2026-04-20', repeat: 'once' },
+        new Date(2026, 3, 20)
+    ), true);
+    test('once: different date → false', reminderOccursOnDate(
+        { date: '2026-04-20', repeat: 'once' },
+        new Date(2026, 3, 21)
+    ), false);
+    test('once: before start → false', reminderOccursOnDate(
+        { date: '2026-04-20', repeat: 'once' },
+        new Date(2026, 3, 19)
+    ), false);
+
+    // Daily
+    test('daily: same date → true', reminderOccursOnDate(
+        { date: '2026-04-20', repeat: 'daily' },
+        new Date(2026, 3, 20)
+    ), true);
+    test('daily: next day → true', reminderOccursOnDate(
+        { date: '2026-04-20', repeat: 'daily' },
+        new Date(2026, 3, 25)
+    ), true);
+    test('daily: before start → false', reminderOccursOnDate(
+        { date: '2026-04-20', repeat: 'daily' },
+        new Date(2026, 3, 19)
+    ), false);
+
+    // Weekly
+    test('weekly: exact start → true', reminderOccursOnDate(
+        { date: '2026-04-20', repeat: 'weekly' },
+        new Date(2026, 3, 20)
+    ), true);
+    test('weekly: 7 days later → true', reminderOccursOnDate(
+        { date: '2026-04-20', repeat: 'weekly' },
+        new Date(2026, 3, 27)
+    ), true);
+    test('weekly: 14 days later → true', reminderOccursOnDate(
+        { date: '2026-04-20', repeat: 'weekly' },
+        new Date(2026, 4, 4)
+    ), true);
+    test('weekly: 3 days later → false', reminderOccursOnDate(
+        { date: '2026-04-20', repeat: 'weekly' },
+        new Date(2026, 3, 23)
+    ), false);
+
+    // Weekly across DST boundary (US spring forward: March 8, 2026)
+    test('weekly: across US spring-forward DST → true', reminderOccursOnDate(
+        { date: '2026-03-01', repeat: 'weekly' },
+        new Date(2026, 2, 15) // 14 days = 2 weeks
+    ), true);
+
+    // Weekly across DST fall back (US: Nov 1, 2026)
+    test('weekly: across US fall-back DST → true', reminderOccursOnDate(
+        { date: '2026-10-25', repeat: 'weekly' },
+        new Date(2026, 10, 1) // 7 days
+    ), true);
+
+
+    // ══════════════════════════════════════════════════════
+    // 4️⃣ shouldAutoExtractReminders
+    // ══════════════════════════════════════════════════════
+    section('4️⃣ shouldAutoExtractReminders');
+
+    test('time + drug name → true',
+        shouldAutoExtractReminders('Take paracetamol at 8:00 AM'), true);
+    test('time + medication keyword → true',
+        shouldAutoExtractReminders('Take your medication at 9:00 AM daily'), true);
+    test('time + "mg" → true',
+        shouldAutoExtractReminders('500mg at 8:00 AM'), true);
+    test('time only, no med context → false',
+        shouldAutoExtractReminders('Meet at 8:00 AM'), false);
+    test('med context only, no time → false',
+        shouldAutoExtractReminders('Take paracetamol after food'), false);
+    test('dot-separated time + med context → true',
+        shouldAutoExtractReminders('Take 500mg tablet at 8.30 am'), true);
+    test('a.m. format + drug → true',
+        shouldAutoExtractReminders('Take aspirin at 8:00 a.m.'), true);
+    test('empty string → false',
+        shouldAutoExtractReminders(''), false);
+    test('null → false',
+        shouldAutoExtractReminders(null), false);
+
+
+    // ══════════════════════════════════════════════════════
+    // 5️⃣ parseReminderCandidates
+    // ══════════════════════════════════════════════════════
+    section('5️⃣ parseReminderCandidates');
+
+    // Basic bold medication
+    const r1 = parseReminderCandidates('Take **Paracetamol** 500mg at 8:00 AM and 8:00 PM daily');
+    test('Bold drug with 2 times → 2 results',    r1.length, 2);
+    test('  name = Paracetamol',                   r1[0]?.name, 'Paracetamol');
+    test('  dosage = 500mg',                       r1[0]?.dosage, '500mg');
+    test('  time[0] = 08:00',                      r1[0]?.time, '08:00');
+    test('  time[1] = 20:00',                      r1[1]?.time, '20:00');
+    test('  repeat = daily',                       r1[0]?.repeat, 'daily');
+
+    // Known drug without bold
+    const r2 = parseReminderCandidates('Take amoxicillin 250mg at 7:00 AM, 3:00 PM, and 11:00 PM daily');
+    test('Known drug no bold → 3 results',         r2.length, 3);
+    test('  name = Amoxicillin (capitalized)',      r2[0]?.name, 'Amoxicillin');
+
+    // Dot-separated times
+    const r3 = parseReminderCandidates('Take **Ibuprofen** 400mg at 8.30 am and 8.30 pm daily');
+    test('Dot times → 2 results',                  r3.length, 2);
+    test('  time[0] = 08:30 (from 8.30 am)',       r3[0]?.time, '08:30');
+    test('  time[1] = 20:30 (from 8.30 pm)',       r3[1]?.time, '20:30');
+
+    // a.m./p.m. format
+    const r4 = parseReminderCandidates('Take **Aspirin** 100mg at 9:00 a.m. daily');
+    test('a.m. format → 1 result',                 r4.length, 1);
+    test('  time = 09:00 (from a.m.)',             r4[0]?.time, '09:00');
+
+    // Weekly recurrence
+    const r5 = parseReminderCandidates('Take **Vitamin D** 1000mg at 10:00 AM every week');
+    test('Weekly → repeat = weekly',               r5[0]?.repeat, 'weekly');
+
+    // Once (no recurrence keyword)
+    const r6 = parseReminderCandidates('Take **Ibuprofen** 400mg at 2:00 PM');
+    test('No recurrence keyword → once',           r6[0]?.repeat, 'once');
+
+    // Deduplication
+    const r7 = parseReminderCandidates('Take **Paracetamol** at 8:00 AM daily\nTake **Paracetamol** at 8:00 AM daily');
+    test('Duplicate lines → deduplicated to 1',    r7.length, 1);
+
+    // Empty / null
+    test('Empty text → []',                        parseReminderCandidates('').length, 0);
+    test('Null → []',                              parseReminderCandidates(null).length, 0);
+    test('No times → []',                          parseReminderCandidates('Take paracetamol after food').length, 0);
+
+    // Multi-line with different drugs
+    const r8 = parseReminderCandidates(
+        'Take **Metformin** 500mg at 8:00 AM and 8:00 PM daily\n' +
+        'Take **Omeprazole** 20mg at 7:00 AM before food daily'
+    );
+    test('Two drugs on two lines → 3 total',       r8.length, 3);
+    test('  #1 = Metformin',                       r8[0]?.name, 'Metformin');
+    test('  #3 = Omeprazole',                      r8[2]?.name, 'Omeprazole');
+
+
+    // ══════════════════════════════════════════════════════
+    // 6️⃣ timeToMinutes
+    // ══════════════════════════════════════════════════════
+    section('6️⃣ timeToMinutes');
+
+    test('08:00 → 480',    timeToMinutes('08:00'), 480);
+    test('00:00 → 0',      timeToMinutes('00:00'), 0);
+    test('23:59 → 1439',   timeToMinutes('23:59'), 1439);
+    test('12:30 → 750',    timeToMinutes('12:30'), 750);
+    test('null → 0',       timeToMinutes(null), 0);
+    test('"" → 0',         timeToMinutes(''), 0);
+
+
+    // ══════════════════════════════════════════════════════
+    // 7️⃣ parseDateKey / toDateKey round-trip
+    // ══════════════════════════════════════════════════════
+    section('7️⃣ parseDateKey / toDateKey round-trip');
+
+    test('2026-04-20 round-trip',  toDateKey(parseDateKey('2026-04-20')), '2026-04-20');
+    test('2026-01-01 round-trip',  toDateKey(parseDateKey('2026-01-01')), '2026-01-01');
+    test('2026-12-31 round-trip',  toDateKey(parseDateKey('2026-12-31')), '2026-12-31');
+    test('2026-02-28 round-trip',  toDateKey(parseDateKey('2026-02-28')), '2026-02-28');
+
+
+    // ══════════════════════════════════════════════════════
+    // 8️⃣ CLEAR_CALENDAR replaceAll
+    // ══════════════════════════════════════════════════════
+    section('8️⃣ CLEAR_CALENDAR replaceAll behavior');
+
+    const testReply1 = 'Sure! [ACTION: CLEAR_CALENDAR] I have cleared your calendar. [ACTION: CLEAR_CALENDAR]';
+    const cleaned1 = testReply1.replaceAll('[ACTION: CLEAR_CALENDAR]', '').trim();
+    test('Double CLEAR_CALENDAR → both removed', cleaned1, 'Sure!  I have cleared your calendar.');
+
+    const testReply2 = 'No action here.';
+    const cleaned2 = testReply2.replaceAll('[ACTION: CLEAR_CALENDAR]', '').trim();
+    test('No CLEAR_CALENDAR → unchanged', cleaned2, 'No action here.');
+
+
+    // ══════════════════════════════════════════════════════
+    // 9️⃣ BTN: SHOW_REMINDER separation logic
+    // ══════════════════════════════════════════════════════
+    section('9️⃣ BTN: SHOW_REMINDER separation');
+
+    function simulateBtnLogic(reply, totalParsed) {
+        const displayReply = totalParsed > 0 ? reply + '\n\n[BTN: SHOW_REMINDER]' : reply;
+        return { displayReply, dbReply: reply };
+    }
+
+    const btn1 = simulateBtnLogic('Take Paracetamol 500mg at 8:00 AM', 2);
+    test('Display has BTN token', btn1.displayReply.includes('[BTN: SHOW_REMINDER]'), true);
+    test('DB reply does NOT have BTN token', btn1.dbReply.includes('[BTN: SHOW_REMINDER]'), false);
+
+    const btn2 = simulateBtnLogic('I cannot help with that.', 0);
+    test('No parsed → display has no BTN', btn2.displayReply.includes('[BTN: SHOW_REMINDER]'), false);
+
+
+    // ══════════════════════════════════════════════════════
+    // 🔟 Gemini/OpenRouter history trimming logic
+    // ══════════════════════════════════════════════════════
+    section('🔟 History trimming (Gemini/OpenRouter)');
+
+    function trimHistory(messages) {
+        let history = messages.filter(m => m.role === 'user' || m.role === 'assistant');
+        if (history.length > 20) history = history.slice(-20);
+        while (history.length && history[0].role !== 'user') {
+            history.shift();
+        }
+        return history;
+    }
+
+    test('Normal order → unchanged', trimHistory([
+        { role: 'user', content: 'hi' },
+        { role: 'assistant', content: 'hello' }
+    ]).length, 2);
+
+    test('Leading assistant → trimmed', trimHistory([
+        { role: 'assistant', content: 'hello' },
+        { role: 'user', content: 'hi' },
+        { role: 'assistant', content: 'yes' }
+    ]).length, 2);
+
+    test('Leading assistant → first is user', trimHistory([
+        { role: 'assistant', content: 'hello' },
+        { role: 'user', content: 'hi' }
+    ])[0].role, 'user');
+
+    test('All assistant → empty', trimHistory([
+        { role: 'assistant', content: 'a' },
+        { role: 'assistant', content: 'b' }
+    ]).length, 0);
+
+    test('System messages filtered out', trimHistory([
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: 'hi' }
+    ]).length, 1);
+
+    test('Empty → empty', trimHistory([]).length, 0);
+
+
+    // ══════════════════════════════════════════════════════
+    // Summary
+    // ══════════════════════════════════════════════════════
+    const summaryDiv = document.getElementById('summary');
+    const allPass = passedTests === totalTests;
+    summaryDiv.className = `summary ${allPass ? 'all-pass' : 'has-fail'}`;
+    summaryDiv.innerHTML = allPass
+        ? `✅ All ${totalTests} tests passed!`
+        : `❌ ${passedTests}/${totalTests} tests passed. ${totalTests - passedTests} failed.`;
+
+    </script>
+</body>
+</html>

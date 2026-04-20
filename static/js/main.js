@@ -88,6 +88,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let calendarCursor = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
     const notifiedKeys = new Set();
     const REMINDER_STORAGE_KEY = 'medication_reminders_v1';
+    const KNOWN_DRUGS_RE = /paracetamol|ibuprofen|amoxicillin|aspirin|metformin|omeprazole|atorvastatin|cetirizine|azithromycin|ciprofloxacin|pantoprazole|crocin|dolo|combiflam|augmentin|calpol|disprin|ecosprin|glycomet|montair|montelukast|levocetirizine|ranitidine|domperidone|ondansetron|diclofenac|aceclofenac|losartan|amlodipine|telmisartan/i;
     let currentView = 'chat';
     let notifHistory = JSON.parse(localStorage.getItem('notif_history') || '[]');
 
@@ -421,8 +422,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function normalizeTimeToken(token) {
         if (!token) return null;
-        const t = token.trim().toLowerCase();
-        if (/^\d{1,2}:\d{2}$/.test(t)) return t;
+        let t = token.trim().toLowerCase();
+        // Normalize "a.m." / "p.m." → "am" / "pm"
+        t = t.replace(/a\.\s?m\.?/g, 'am').replace(/p\.\s?m\.?/g, 'pm');
+        // Normalize dot-separated time "8.30" → "8:30"
+        t = t.replace(/^(\d{1,2})\.(\d{2})/, '$1:$2');
+        // Collapse whitespace
+        t = t.replace(/\s+/g, ' ').trim();
+
+        // Bare 24h format like "13:00", "0:00" — pad the hour
+        const bare24 = t.match(/^(\d{1,2}):(\d{2})$/);
+        if (bare24) {
+            return `${String(bare24[1]).padStart(2, '0')}:${bare24[2]}`;
+        }
+        // 12h format: "8am", "8:30 pm", "8 am"
         const m = t.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/);
         if (!m) return null;
         let h = Number(m[1]);
@@ -450,10 +463,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const sentences = text.split(/\n|(?<=\w)\.\s|;/).map(s => s.trim()).filter(Boolean);
         const results = [];
 
-        const knownDrugs = /paracetamol|ibuprofen|amoxicillin|aspirin|metformin|omeprazole|atorvastatin|cetirizine|azithromycin|ciprofloxacin|pantoprazole|crocin|dolo|combiflam|augmentin|calpol|disprin|ecosprin|glycomet|montair|montelukast|levocetirizine|ranitidine|domperidone|ondansetron|diclofenac|aceclofenac|losartan|amlodipine|telmisartan/i;
-
         for (const sentence of sentences) {
-            const timeMatches = sentence.match(/\b\d{1,2}:\d{2}\b|\b\d{1,2}(?::\d{2})?\s?(?:am|pm)\b/gi) || [];
+            const timeMatches = sentence.match(/\b\d{1,2}[:.]\d{2}\b|\b\d{1,2}(?:[:.]\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)\b/gi) || [];
             if (!timeMatches.length) continue;
 
             let repeat = 'once';
@@ -472,7 +483,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // Try matching known drug names
             if (!medName) {
-                const drugMatch = sentence.match(knownDrugs);
+                const drugMatch = sentence.match(KNOWN_DRUGS_RE);
                 if (drugMatch) {
                     medName = drugMatch[0].charAt(0).toUpperCase() + drugMatch[0].slice(1).toLowerCase();
                 }
@@ -512,21 +523,33 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
-        const unique = [];
-        const seen = new Set();
+        // Dedup by date+time — same time slot on the same date is the same
+        // reminder regardless of small name variations across sentences.
+        const bestBySlot = new Map();
         results.forEach(r => {
-            const key = `${r.name.toLowerCase()}|${r.date}|${r.time}|${r.repeat}`;
-            if (seen.has(key)) return;
-            seen.add(key);
-            unique.push(r);
+            const slotKey = `${r.date}|${r.time}`;
+            if (bestBySlot.has(slotKey)) {
+                // Keep the entry whose name looks most like a real medicine
+                const existing = bestBySlot.get(slotKey);
+                const existingIsDrug = KNOWN_DRUGS_RE.test(existing.name);
+                const currentIsDrug = KNOWN_DRUGS_RE.test(r.name);
+                if (!existingIsDrug && currentIsDrug) {
+                    bestBySlot.set(slotKey, r);
+                } else if (!existingIsDrug && !currentIsDrug && r.name.length > existing.name.length) {
+                    bestBySlot.set(slotKey, r);
+                }
+                // If existing is already a drug name, keep it
+                return;
+            }
+            bestBySlot.set(slotKey, r);
         });
-        return unique;
+        return Array.from(bestBySlot.values());
     }
 
     function shouldAutoExtractReminders(text) {
         const value = (text || '').toLowerCase();
-        const hasTime = /\b\d{1,2}:\d{2}\b|\b\d{1,2}(?::\d{2})?\s?(?:am|pm)\b/i.test(value);
-        const hasMedicationContext = /medicine|medication|tablet|capsule|syrup|dose|dosage|prescription|reminder|take|mg|ml|mcg|paracetamol|ibuprofen|amoxicillin|aspirin|metformin|omeprazole|atorvastatin|cetirizine|azithromycin|ciprofloxacin|pantoprazole|before food|after food|before meal|after meal|twice a day|three times|thrice|once daily|every \d+ hours|morning|evening|night|bedtime/.test(value);
+        const hasTime = /\b\d{1,2}[:.]\d{2}\b|\b\d{1,2}(?:[:.]\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)\b/i.test(value);
+        const hasMedicationContext = KNOWN_DRUGS_RE.test(value) || /medicine|medication|tablet|capsule|syrup|dose|dosage|prescription|reminder|take|mg|ml|mcg|before food|after food|before meal|after meal|twice a day|three times|thrice|once daily|every \d+ hours|morning|evening|night|bedtime/.test(value);
         return hasTime && hasMedicationContext;
     }
 
@@ -563,6 +586,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const dateKey = toDateKey(dateObj);
         const start = parseDateKey(reminder.date);
         const current = parseDateKey(dateKey);
+        // Normalize to noon to avoid DST boundary off-by-one errors
+        start.setHours(12, 0, 0, 0);
+        current.setHours(12, 0, 0, 0);
         if (current < start) return false;
         if (reminder.repeat === 'daily') return true;
         if (reminder.repeat === 'weekly') {
@@ -1512,9 +1538,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const pdfBlob = await res.blob();
             const url = URL.createObjectURL(pdfBlob);
+            const disposition = res.headers.get('Content-Disposition') || '';
+            const filenameMatch = disposition.match(/filename[^;=\n]*=(['"]?)([^'"\n;]+)\1/);
             const a = document.createElement('a');
             a.href = url;
-            a.download = 'Medication_Chat.pdf';
+            a.download = filenameMatch ? filenameMatch[2] : 'Medication_Chat.pdf';
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
@@ -1603,7 +1631,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // Handle hidden calendar actions
             if (reply.includes('[ACTION: CLEAR_CALENDAR]')) {
-                reply = reply.replace('[ACTION: CLEAR_CALENDAR]', '').trim();
+                reply = reply.replaceAll('[ACTION: CLEAR_CALENDAR]', '').trim();
                 const existing = JSON.parse(localStorage.getItem('medication_reminders_v1') || '[]');
                 if (existing.length > 0) {
                     localStorage.setItem('medication_reminders_v1', '[]');
@@ -1613,11 +1641,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
 
-            // Auto-create reminders from user message, uploaded prescription text, and AI schedule reply.
+            // Auto-create reminders from uploaded prescription text and AI schedule reply.
+            // NOTE: We intentionally skip the user's raw message — the AI reply already
+            // contains the canonical, structured schedule.  Parsing both causes duplicates.
             let autoAdded = 0;
             let totalParsed = 0;
             const extractionSources = [
-                { content: text, label: 'chat instruction' },
                 { content: (_fileText || '').slice(0, 7000), label: 'uploaded prescription' },
                 { content: reply, label: 'ai recommendation' }
             ];
@@ -1634,16 +1663,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 pushInAppNotification('Calendar updated', `${autoAdded} medication reminder${autoAdded > 1 ? 's' : ''} added.`);
             }
 
-            // Show "Show Reminder" button if any schedule content was detected
-            if (totalParsed > 0) {
-                reply += '\n\n[BTN: SHOW_REMINDER]';
-            }
+            // Show "Show Reminder" button if any schedule content was detected (display only, not persisted)
+            const displayReply = totalParsed > 0 ? reply + '\n\n[BTN: SHOW_REMINDER]' : reply;
 
             removeTypingIndicator();
-            appendBubble('assistant', reply, null, null, apiMode);
+            appendBubble('assistant', displayReply, null, null, apiMode);
             chatHistory.push({ role: 'assistant', content: reply });
 
-            // Persist assistant reply
+            // Persist assistant reply (clean, without UI-only tokens)
             await fetch(`/api/sessions/${activeSessionId}/messages`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },

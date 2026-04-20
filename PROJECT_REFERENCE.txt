@@ -1,0 +1,760 @@
+MEDICATION ASSISTANT PROJECT REFERENCE
+======================================
+
+Purpose of this file
+--------------------
+This document is a dense study reference for the full Medication Assistant project. It explains the folder structure, code responsibilities, runtime flow, backend API, frontend behavior, AI integrations, reminder system, deployment setup, and important design decisions so a student can understand how the website works end to end.
+
+Project summary
+---------------
+Medication Assistant is a Flask-based web application that combines:
+- Medication-focused AI chat
+- Session history stored in Supabase
+- Reminder/calendar management in the browser
+- Voice input, file upload, and image upload
+- PDF export of chat sessions
+- Dark mode and responsive mobile UI
+- Server-side proxy routes for AI API security
+
+The app is built with:
+- Python and Flask on the backend
+- Supabase PostgreSQL for persistence
+- Vanilla JavaScript for the client logic
+- HTML and CSS for the interface
+- Google Gemini and OpenRouter as AI providers
+- reportlab for PDF export
+- pdf.js for PDF text extraction in the browser
+
+Top-level folder map
+--------------------
+1. CHANGES_SUMMARY.md
+   - Short changelog describing recent fixes, especially off-topic response tightening and mobile improvements.
+   - Useful for understanding why some UI and prompt behavior changed.
+
+2. README.md
+   - Main quick-start document.
+   - Covers features, environment variables, local run steps, deployment notes, and the basic Supabase schema.
+
+3. requirements.txt
+   - Python dependencies used by the backend.
+   - Includes Flask, reportlab, python-dotenv, and supabase.
+
+4. server.py
+   - Main Flask application.
+   - Handles routes for the homepage, AI proxying, session CRUD, message CRUD, smart title generation, and PDF export.
+
+5. SUPABASE_SETUP.md
+   - Detailed database setup guide.
+   - Explains how to create the `chats` and `messages` tables in Supabase.
+
+6. vercel.json
+   - Vercel routing configuration.
+   - Points all requests to `api/index.py`.
+
+7. api/index.py
+   - Thin Vercel entrypoint.
+   - Imports `app` from `server.py` so the same Flask app can run on Vercel.
+
+8. templates/index.html
+   - Main application markup.
+   - Contains the sidebar, header, reminder dashboard, chat area, input area, settings modal, and hidden API selector.
+
+9. static/css/styles.css
+   - Full visual design system.
+   - Controls the layout, dark theme, cards, chat bubbles, calendar UI, notifications, modal styling, and mobile responsiveness.
+
+10. static/js/main.js
+    - Main client-side application controller.
+    - Manages sessions, chat rendering, file attachments, voice input, reminders, notifications, provider switching, and PDF export.
+
+11. static/js/gemini.js
+    - Gemini client wrapper.
+    - Sends the user and assistant history to the server-side Gemini proxy.
+
+12. static/js/openrouter.js
+    - OpenRouter client wrapper.
+    - Sends chat history to the server-side OpenRouter proxy.
+
+13. static/js/config.js
+    - Deprecated compatibility file.
+    - Only preserves a placeholder object because API keys are now server-side only.
+
+14. data/
+    - Present in the repository structure, but the current code path no longer uses a local SQLite database file.
+    - The current backend is Supabase-based.
+
+15. static/
+    - Holds the frontend assets.
+
+16. templates/
+    - Holds the HTML template served by Flask.
+
+Architecture overview
+---------------------
+The app is a single-page style web interface served by Flask.
+
+High-level flow:
+1. The browser loads `templates/index.html` from Flask.
+2. The page imports `gemini.js`, `openrouter.js`, and `main.js`.
+3. `main.js` initializes the UI, loads chats from Supabase, loads reminders from localStorage, and sets up event listeners.
+4. When the user sends a message, the frontend saves the user message to Supabase, calls one of the AI proxy routes, renders the assistant response, and saves that response back to Supabase.
+5. Reminder data stays in browser localStorage and drives the calendar, notifications, and quick reminder actions.
+6. PDF export is requested from the backend and returned as a download.
+7. On Vercel, `api/index.py` exposes the same Flask app through `vercel.json`.
+
+Backend: server.py
+------------------
+`server.py` is the central backend file and contains the complete Flask app.
+
+Initialization behavior:
+- Loads environment variables using python-dotenv if available.
+- Reads `SUPABASE_URL` and `SUPABASE_ANON_KEY` from the environment.
+- Raises an error if Supabase configuration is missing.
+- Creates a Supabase client with `create_client`.
+- Creates the Flask app instance.
+
+Important backend dependencies:
+- Flask for routing and responses
+- BytesIO for in-memory PDF generation
+- base64 for embedded image decoding in exported PDFs
+- importlib for lazy imports of reportlab components
+- re for filename cleanup and markup parsing
+- xml.sax.saxutils.escape for safe PDF text rendering
+- urllib for external HTTP requests to Gemini and OpenRouter
+- json for request and response serialization
+
+Backend routes
+--------------
+1. GET /
+   - Renders `templates/index.html`.
+   - This is the main browser entrypoint.
+
+2. POST /api/ai/gemini
+   - Server-side proxy for Gemini.
+   - Reads `GEMINI_API_KEY` from environment variables.
+   - Never exposes the key to the browser.
+   - Forwards `systemInstruction` and `contents` to Gemini.
+   - Uses the `gemini-2.5-flash` model.
+   - Returns the upstream response body directly.
+
+3. POST /api/ai/openrouter
+   - Server-side proxy for OpenRouter.
+   - Reads `OPENROUTER_API_KEY` from environment variables.
+   - Forwards the request body to `https://openrouter.ai/api/v1/chat/completions`.
+   - Adds headers for `Authorization`, `HTTP-Referer`, and `X-Title`.
+   - Returns the upstream response body directly.
+
+4. GET /api/sessions
+   - Lists all chat sessions from the `chats` table.
+   - Sorts by favorite first, then newest first.
+
+5. POST /api/sessions
+   - Creates a new session with the default title `New Chat`.
+   - Returns the created row.
+
+6. DELETE /api/sessions
+   - Deletes all chats.
+   - Because the `messages` table uses `ON DELETE CASCADE`, related messages are removed automatically.
+
+7. PATCH /api/sessions/<sid>
+   - Updates a session title and/or favorite state.
+   - Casts `is_favorite` to a boolean.
+
+8. DELETE /api/sessions/<sid>
+   - Deletes one chat session.
+   - Messages disappear through cascade deletion.
+
+9. POST /api/sessions/<sid>/generate-title
+   - Creates a short title from the first user message.
+   - Uses Gemini when `GEMINI_API_KEY` exists.
+   - Falls back to truncating the message if the key is missing or the request fails.
+   - Updates the `chats.title` field.
+
+10. GET /api/sessions/<sid>/messages
+    - Returns all messages for the selected session ordered oldest to newest.
+
+11. POST /api/sessions/<sid>/messages
+    - Saves a message row in Supabase.
+    - Accepts `role`, `content`, `image_data`, and `provider_mode`.
+
+12. GET /api/sessions/<sid>/export
+    - Builds a PDF from the selected session and its messages.
+    - Downloads the result as a file.
+
+PDF export pipeline
+-------------------
+The export route uses reportlab to create a formatted PDF in memory.
+
+Key PDF behaviors:
+- Validates that the requested session exists.
+- Fetches all messages in chronological order.
+- Rejects export if there are no messages.
+- Uses A4 page size and custom paragraph styles.
+- Adds visual styling for user and assistant messages.
+- Parses message content into paragraphs, headings, bullets, and code blocks.
+- Renders markdown-like inline formatting for bold, italics, code, and links.
+- Decodes embedded `image_data` values and inserts images into the PDF.
+- Falls back to a text note if an image cannot be decoded.
+- Sanitizes the export filename before sending the PDF.
+
+Helper functions used in PDF export:
+- `_sanitize_filename(name)`
+  - Removes unsafe characters and replaces spaces with underscores.
+- `_format_time(date_str)`
+  - Formats stored timestamps for display.
+- `_inline_markup(text)`
+  - Converts markdown-like inline formatting to reportlab-friendly markup.
+- `_message_blocks(text)`
+  - Splits message text into structural blocks such as paragraphs, code blocks, headings, and bullets.
+
+Database schema
+---------------
+The backend expects a Supabase database with two tables.
+
+1. chats
+   - `id` BIGINT primary key identity
+   - `title` TEXT default `New Chat`
+   - `is_favorite` BOOLEAN default FALSE
+   - `created_at` TIMESTAMP default NOW()
+
+2. messages
+   - `id` BIGINT primary key identity
+   - `chat_id` BIGINT foreign key to `chats.id` with `ON DELETE CASCADE`
+   - `role` TEXT, usually `user` or `assistant`
+   - `content` TEXT
+   - `image_data` TEXT for base64 data URLs
+   - `provider_mode` TEXT for the AI provider used
+   - `created_at` TIMESTAMP default NOW()
+
+Important database behavior:
+- Chats can be starred using `is_favorite`.
+- Messages belong to exactly one chat.
+- Deleting a chat removes all its messages.
+- The app relies on Supabase as the source of truth for session history.
+
+Frontend document structure: index.html
+--------------------------------------
+The HTML file defines the whole visual structure of the app.
+
+Main UI regions:
+1. Sidebar
+   - Brand area with the medication icon.
+   - New Chat button.
+   - Saved Chats section for favorite sessions.
+   - Quick Calendar section.
+   - Chat History section for non-starred sessions.
+   - API Settings and About buttons at the bottom.
+
+2. Sidebar resize handle
+   - Lets desktop users drag the sidebar width.
+
+3. Sidebar overlay
+   - Used on mobile to close the drawer.
+
+4. Main area
+   - Header with sidebar toggle, title, notifications, theme toggle, and PDF export.
+   - Reminder dashboard view.
+   - About view.
+   - Chat view.
+   - Input area.
+
+5. Settings modal
+   - Explains that API keys are now stored on the server only.
+   - No client-side key inputs are used anymore.
+
+6. Hidden API selector
+   - A hidden `<select>` element used to store the active provider mode.
+   - `main.js` reads and updates this state.
+
+External assets loaded in the HTML:
+- Google Fonts Inter
+- Material Symbols Outlined
+- pdf.js from CDN
+- html2pdf.js from CDN
+- `static/css/styles.css`
+- `static/js/gemini.js`
+- `static/js/openrouter.js`
+- `static/js/main.js`
+
+Frontend logic: main.js
+----------------------
+`static/js/main.js` is the main controller for the entire browser experience.
+It wires together DOM events, local state, session loading, reminder logic, notifications, file handling, voice input, markdown rendering, and message sending.
+
+Major responsibilities:
+- Session list loading and rendering
+- Favorite session grouping
+- Active session loading
+- New chat creation
+- Chat bubble rendering
+- Assistant typing indicator
+- Theme persistence
+- Model selection persistence
+- Sidebar open/collapse behavior
+- Sidebar resizing on desktop
+- Calendar data stored in localStorage
+- Reminder CRUD in localStorage
+- Notification badge and notification history
+- Voice recognition input
+- File and image attachments
+- PDF export trigger
+- Smart title generation after the first user message
+- Auto-reminder extraction from messages and AI responses
+
+Key DOM references
+-------------------
+The script maps almost every UI element by id at startup.
+Examples include:
+- Sidebar and overlay controls
+- Session lists
+- Chat input and send button
+- Attachment preview elements
+- API settings modal
+- Theme toggle
+- Export button
+- Reminder form fields
+- Calendar grid containers
+- Notification UI
+- About view and chat view containers
+
+Core state variables
+--------------------
+Important frontend state includes:
+- `activeSessionId`
+  - Current selected Supabase chat session.
+- `chatHistory`
+  - Local array of message objects used for AI requests.
+- `currentFileText`
+  - Extracted text from uploaded text or PDF files.
+- `currentImageB64`
+  - Base64 image data URL for image attachments.
+- `isRecording`
+  - Whether voice input is active.
+- `isFirstMessage`
+  - Used to trigger smart title generation.
+- `savedChatsCollapsed`
+  - Whether starred chats are collapsed in the sidebar.
+- `reminders`
+  - Browser-side reminder objects loaded from localStorage.
+- `selectedDate`
+  - Day currently selected in the calendar.
+- `calendarCursor`
+  - Month currently being displayed in the calendar.
+- `notifiedKeys`
+  - Set used to prevent duplicate reminder alerts.
+- `REMINDER_STORAGE_KEY`
+  - localStorage key: `medication_reminders_v1`.
+- `notifHistory`
+  - Stored recent notification activity.
+
+Deprecated key cleanup
+----------------------
+The script removes old localStorage values for `geminiKey` and `openrouterKey`.
+This matches the security shift to server-side proxy routes.
+
+Theme handling
+--------------
+- Reads the saved theme from localStorage.
+- Applies `data-theme="light"` or `data-theme="dark"` to the document root.
+- Toggles theme on button click.
+- Stores the choice back to localStorage.
+
+Provider switching
+------------------
+- Reads `apiModel` from localStorage.
+- Defaults to `openrouter`.
+- Updates the hidden selector and the visible switch button.
+- Changes the label and icon styling depending on whether Gemini or OpenRouter is active.
+- Persists the selection in localStorage.
+
+Session management behavior
+---------------------------
+1. Loading sessions
+   - Fetches `/api/sessions`.
+   - Splits results into starred and recent sessions.
+   - Renders each session as a button with star and delete actions.
+
+2. Loading a session
+   - Clears current message view.
+   - Fetches `/api/sessions/<sid>/messages`.
+   - Rebuilds local `chatHistory`.
+   - Shows the welcome screen if the session is empty.
+
+3. Creating a new session
+   - Happens automatically the first time the user sends a message without an active session.
+
+4. Deleting a session
+   - Calls the backend delete route.
+   - Resets the view if the deleted session was active.
+
+5. Favoriting a session
+   - Sends a PATCH request to flip `is_favorite`.
+
+6. Clearing all history
+   - Deletes all sessions on the backend.
+   - Clears local chat state.
+   - Removes any leftover client-only keys.
+
+Reminder system design
+----------------------
+The calendar and reminder engine are entirely browser-side.
+Nothing about reminders is stored in Supabase in the current code path.
+
+Storage key:
+- `medication_reminders_v1`
+
+Reminder object shape:
+- `id`
+- `name`
+- `dosage`
+- `date`
+- `time`
+- `repeat`
+- `notes`
+- `color`
+- `taken_on`
+
+Supported repeat modes:
+- once
+- daily
+- weekly
+
+Reminder date logic:
+- `toDateKey(dateObj)` converts a Date to `YYYY-MM-DD`.
+- `parseDateKey(dateKey)` converts a date string back to a Date.
+- `timeToMinutes(t)` normalizes a time string for sorting and comparisons.
+- `formatReminderTime(t)` displays time in 12-hour format.
+- `reminderOccursOnDate(reminder, dateObj)` checks whether a reminder should appear on that day.
+
+Reminder creation:
+- Users can fill the reminder form manually.
+- The form sets defaults such as today’s date and `08:00`.
+- A reminder gets a generated id and auto-picked color if no custom color is set.
+- Saving a reminder updates localStorage and refreshes the calendars.
+
+Mark as taken:
+- Each reminder can be marked taken for a specific date.
+- Taken state is stored in `taken_on` as an array of date keys.
+- The day detail panel shows taken status and lets the user toggle it.
+
+Reminder deletion:
+- Reminders can be removed from the day detail panel.
+
+Calendar rendering
+------------------
+The app has multiple calendar views driven from the same reminder array.
+
+1. Sidebar mini calendar
+   - Shows the current month in compact form.
+   - Displays dots for days with reminders.
+   - Clicking a day jumps to the calendar view and selects that date.
+
+2. Main monthly calendar
+   - 6-week grid with weekday headers.
+   - Highlights today and the selected date.
+   - Shows up to 3 reminder dots per day.
+   - Navigation buttons move between months.
+
+3. Weekly strip
+   - Shows the next 7 days in a horizontal strip.
+   - Useful for quick inspection of near-future reminders.
+
+4. Day detail panel
+   - Lists all reminders for the selected day.
+   - Shows medicine name, time, dosage, notes, and repeat mode.
+   - Includes Mark Taken and Delete actions.
+
+5. Stats bar
+   - Shows total reminders for today.
+   - Shows how many are already marked taken.
+   - Shows the next upcoming dose time or `Done`.
+
+Notification system
+-------------------
+Notifications are layered:
+- In-app toast-like notification cards appear in the top right.
+- A notification bell in the header shows a badge when activity exists.
+- A dropdown lists upcoming doses and recent notification activity.
+- Browser Notification API alerts appear if permission is granted.
+- A short audio tone plays when a reminder triggers.
+
+Important notification details:
+- `runReminderChecks()` runs immediately on startup and then every 30 seconds.
+- It checks whether any reminder matches the current date and current minute.
+- It avoids duplicate alerts using `notifiedKeys`.
+- `notifHistory` is capped to the most recent 30 items.
+- Notification history is saved to localStorage under `notif_history`.
+
+Auto-extraction of reminders
+----------------------------
+A major feature in `main.js` is automatic reminder creation from text.
+This can happen from:
+- User message text
+- Uploaded prescription text
+- AI response text
+
+The process works like this:
+1. The code checks if the text includes medication context and a time.
+2. If so, `parseReminderCandidates()` scans sentences for:
+   - Time patterns
+   - Known medicine names
+   - Dosage tokens
+   - Repeat hints like daily or weekly
+3. It extracts reminder candidates.
+4. `addRemindersFromParsed()` inserts new reminders unless they already exist.
+5. If reminders were added, the calendar updates and the user sees a notification.
+6. If any schedule-like content was detected, the assistant response gets a `[BTN: SHOW_REMINDER]` marker.
+
+Supported extraction patterns:
+- Times in 24-hour form such as `08:00`
+- Times in 12-hour form such as `8:00 AM`
+- Common drug names and branded examples listed in the regex
+- Dose words like mg, ml, mcg, tablet, capsule, and drops
+- Phrases like daily, weekly, twice a day, morning, night, before food, after food
+
+This extraction is heuristic, so it is helpful but not perfect.
+
+Chat rendering and markdown support
+-----------------------------------
+The frontend renders chat bubbles with markdown-like formatting.
+
+User bubbles:
+- Plain text rendering with timestamps.
+
+Assistant bubbles:
+- Markdown formatting using `formatMarkdown()`.
+- Supports bold, italics, inline code, code blocks, headings, ordered lists, unordered lists, blockquotes, and links.
+- Supports a special `[BTN: SHOW_REMINDER]` token that becomes a clickable reminder button.
+- Shows provider label and timestamp in meta text.
+
+Image handling in bubbles:
+- If a message contains an attached image, it is converted from data URL to blob URL for display.
+- Clicking the image opens it in a new tab.
+
+Attachment support
+------------------
+Users can attach:
+- Images
+- PDF files
+- Plain text files
+- Other text-like files handled as raw text
+
+Behavior by file type:
+- Images are converted to base64 data URLs.
+- PDFs are read through pdf.js and text is extracted page by page.
+- Text files are read with `file.text()`.
+- A preview panel shows either the image thumbnail or the file name.
+- Attachments are sent alongside the chat message and passed into the AI wrapper.
+
+Voice input
+-----------
+The app uses the browser Web Speech API when available.
+
+Behavior:
+- Uses `window.SpeechRecognition` or `window.webkitSpeechRecognition`.
+- Sets language to `en-IN`.
+- Runs continuously with interim results.
+- Appends speech text into the textarea while preserving any typed text.
+- Updates the input area in real time.
+- Restarts automatically if the recognition session ends unexpectedly.
+- If the browser does not support speech recognition, the mic button is disabled visually.
+
+Smart title generation
+----------------------
+When the first user message is sent in a new session, `main.js` calls the backend title route.
+
+Result:
+- Gemini summarizes the message into a short 2-3 word title.
+- The session list refreshes afterward.
+- If title generation fails, the app falls back to a truncated version of the original message.
+
+Message sending flow
+--------------------
+This is the core interaction sequence.
+
+1. The user types a message or attaches a file/image.
+2. If there is no active session, the frontend creates one first.
+3. The user bubble is shown immediately.
+4. The user message is saved to `/api/sessions/<sid>/messages`.
+5. The assistant typing indicator appears.
+6. The frontend chooses Gemini or OpenRouter based on the current model selector.
+7. It calls `window.fetchGeminiResponse()` or `window.fetchOpenRouterResponse()`.
+8. The AI returns a reply.
+9. If the reply contains `ACTION: CLEAR_CALENDAR`, the browser reminder list is cleared locally and the calendar refreshes.
+10. The app scans the user text, uploaded text, and reply for reminder candidates.
+11. If reminders were detected, they are auto-added and the calendar view is refreshed.
+12. The assistant response is rendered in the chat.
+13. The assistant reply is saved to Supabase with `provider_mode`.
+14. The send box is re-enabled.
+
+Important detail:
+- The frontend stores the session history in Supabase, but reminders stay in browser localStorage.
+
+AI wrapper files
+----------------
+1. static/js/gemini.js
+   - Builds a Gemini-specific system prompt.
+   - Enforces health/medicine scope.
+   - Truncates file text to 8000 characters.
+   - Injects document text into the last user message.
+   - Adds image data to the latest user message when present.
+   - Keeps only the last 20 turns.
+   - Sends the request to `/api/ai/gemini`.
+
+2. static/js/openrouter.js
+   - Builds an OpenRouter-specific system prompt.
+   - Similar medical scope, markdown, and calendar formatting rules.
+   - Truncates file text to 8000 characters.
+   - Keeps only the last 20 turns.
+   - Sends requests to `/api/ai/openrouter`.
+   - Uses `gpt-3.5-turbo` for text and `gpt-4o-mini` when an image is attached.
+
+Prompt behavior
+---------------
+The system prompts are a critical part of the application.
+They define the assistant as a healthcare and medication helper.
+
+Main rules enforced by the prompts:
+- Stay on medication and health topics.
+- Refuse unrelated prompts.
+- Refuse prompt-injection attempts.
+- Do not give definitive diagnoses for serious conditions.
+- Do not recommend taking another person’s prescription.
+- Format schedules clearly so reminders can be parsed.
+- Emit `[ACTION: CLEAR_CALENDAR]` when the calendar should be reset.
+
+Current note from repo memory
+-----------------------------
+The repository memory notes that the app previously used client-exposed API keys, but that flow was removed.
+The current design uses server-only proxy routes for Gemini and OpenRouter.
+The frontend no longer stores the AI keys in browser localStorage.
+
+Deployment details
+------------------
+Local development:
+- Activate the recommended Conda environment named `ai`.
+- Install dependencies with `pip install -r requirements.txt`.
+- Start the app with `python server.py`.
+- The default port is 8000 unless `PORT` is set.
+
+Vercel deployment:
+- `vercel.json` routes everything to `api/index.py`.
+- `api/index.py` imports `app` from `server.py`.
+- The same Flask app therefore serves both local and Vercel environments.
+
+Environment variables
+---------------------
+Required server environment variables:
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+- `GEMINI_API_KEY`
+- `OPENROUTER_API_KEY`
+- `PORT` is optional
+
+Security notes:
+- Keys must stay in environment variables, not in frontend files.
+- The settings modal exists only to explain this server-side model.
+- If older keys were ever exposed, they should be rotated.
+
+What students should understand first
+-------------------------------------
+1. Start with `server.py`.
+   - It shows the backend route structure and the Supabase connection.
+
+2. Then read `templates/index.html`.
+   - It shows the actual page sections the user sees.
+
+3. Then read `static/js/main.js`.
+   - It is the main behavior engine for the whole UI.
+
+4. Then read `static/js/gemini.js` and `static/js/openrouter.js`.
+   - They explain how messages are transformed before being sent to the AI.
+
+5. Then read `static/css/styles.css`.
+   - It explains the visual structure and responsive behavior.
+
+6. Finally read `SUPABASE_SETUP.md` and `README.md`.
+   - They explain setup, deployment, and database preparation.
+
+Important localStorage keys
+---------------------------
+- `theme`
+  - Saves light or dark mode.
+- `apiModel`
+  - Saves Gemini or OpenRouter selection.
+- `medication_reminders_v1`
+  - Stores reminder data.
+- `notif_history`
+  - Stores recent notification activity.
+- Deprecated keys removed on load:
+  - `geminiKey`
+  - `openrouterKey`
+
+UI and styling details
+----------------------
+The visual language is built around card surfaces, rounded controls, and clear section separation.
+
+Key styling concepts:
+- Light and dark theme via CSS variables.
+- Sidebar on the left, main content on the right.
+- Custom calendar cards for reminders.
+- Rounded chat bubbles.
+- Material Symbols icons.
+- Noticeable but restrained use of gradients in calendar and buttons.
+- A compact, productivity-focused desktop layout.
+
+Responsive behavior:
+- At widths of 768px and below, the sidebar becomes a mobile drawer.
+- The calendar stacks into a single-column layout.
+- Touch targets are increased to around 44px minimum.
+- Chat bubbles shrink to fit mobile screens.
+- The notification stack shifts to full-width positioning.
+- The input area, modals, and reminder cards become more compact.
+- `100svh` is used on mobile to better handle browser viewport changes.
+
+Special UI components
+---------------------
+- Notification bell with badge and dropdown.
+- Calendar weekly strip.
+- Reminder dashboard with live clock and stats.
+- Welcome chips for quick prompts.
+- Attachment preview panel.
+- Inline Show Reminder button rendered from assistant output.
+- Sidebar collapse state on desktop.
+- Sidebar open state on mobile.
+- Resizable sidebar drag handle on desktop.
+
+Known implementation characteristics
+------------------------------------
+- The app does not currently persist reminders in Supabase.
+- Reminder logic is local to the browser.
+- Session history is server-persisted in Supabase.
+- AI conversations are proxied through the Flask backend.
+- `config.js` remains only for legacy compatibility.
+- The page includes `html2pdf.js`, but the actual export flow in the current code path uses the backend PDF route.
+- The assistant is intentionally restricted to health and medication topics.
+
+Suggested study path
+--------------------
+If you are using this file to build notes or a presentation, a good presentation order is:
+1. What the app does and why it exists.
+2. Folder structure and architecture.
+3. Backend routes and Supabase tables.
+4. Frontend page layout.
+5. Chat flow and AI integration.
+6. Reminder/calendar system.
+7. Voice input and file uploads.
+8. PDF export.
+9. Security changes and server-side keys.
+10. Mobile design and responsiveness.
+11. Deployment to Vercel.
+
+Concise flow summary
+--------------------
+User opens the site -> Flask serves the HTML -> frontend initializes -> sessions load from Supabase -> user sends a medication question -> frontend saves the message -> backend proxies to Gemini or OpenRouter -> assistant reply appears -> reminders may be extracted -> reminder calendar updates -> response is stored -> user can export the chat as a PDF.
+
+This is the core behavior of the project.
+
+End of reference
+---------------
+This file is meant as a single study companion for students and future maintainers.

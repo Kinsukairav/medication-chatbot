@@ -62,6 +62,10 @@ window.fetchOpenRouterResponse = async function (messages, fileText, imageBase64
 
     // Keep only last 20 turns
     if (history.length > 20) history = history.slice(-20);
+    // Ensure first message is from user role
+    while (history.length && history[0].role !== 'user') {
+        history.shift();
+    }
 
     // Inject file context into latest user message
     if (fileText && history.length) {
